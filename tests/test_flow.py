@@ -194,3 +194,14 @@ def test_deep_research_uses_opus_and_keeps_owner_edits(monkeypatch):
     assert v["change_summary"] == "Глубокий разбор (Opus)"
     assert db.jload(v["report"])["deep"] is True
     assert db.jload(v["econ_inputs"])["markets"]["USA"]["price"] == 77  # правка владельца сохранена
+
+
+def test_telegram_card_explains_verdict():
+    from app import economics, notify, scoring
+    econ = economics.compute(economics.default_inputs())
+    rep = {"markets": {mk: {"scores": {k: {"score": 6} for k in ("demand", "intent", "competition", "feasibility")}}
+                       for mk in ("USA", "UAE")}, "main_risk": "Сезон короткий", "next_step": {"action": "Заказать образцы"}}
+    sc = scoring.evaluate(rep, econ, {})
+    txt = notify.explain(sc, {"market": rep})
+    assert "По рынкам" in txt and "Почему:" in txt and "Цена товара" in txt
+    assert "Риск: Сезон короткий" in txt and "Шаг: Заказать образцы" in txt

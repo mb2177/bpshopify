@@ -82,17 +82,64 @@ def idea_ready(user_id: int, idea_id: int, version: int, updated: bool = False):
         return
     head = "🔄 Разбор обновлён" if updated else ("✅ Разбор готов" if idea["status"] == "ready" else "🟡 Разбор готов частично")
     with db.db() as conn:
-        ver = conn.execute("SELECT report FROM idea_versions WHERE idea_id=? AND version=?", (idea_id, version)).fetchone()
-    if ver and db.jload(ver["report"], {}).get("deep"):
+        ver = conn.execute("SELECT report, scoring FROM idea_versions WHERE idea_id=? AND version=?",
+                           (idea_id, version)).fetchone()
+    report = db.jload(ver["report"], {}) if ver else {}
+    sc = db.jload(ver["scoring"], {}) if ver else {}
+    if report.get("deep"):
         head = "🔬 Глубокий разбор (Opus) готов"
     demo = "\n⚠️ ДЕМО-данные (тестовый режим), не настоящие." if idea["is_demo"] else ""
     origin = " · идея дня" if idea["origin"] == "daily" else ""
     score = f"{idea['score']:.1f}/10" if idea["score"] is not None else "—"
+    link = idea_link(idea_id)
     text = (f"{head} · Идея #{idea_id}{origin}\n<b>{html.escape(idea['title'] or '')}</b>\n\n"
             f"Оценка: <b>{score}</b>\nВывод: {html.escape(idea['verdict'] or '—')}\n"
-            f"Первый рынок: {config.MARKET_LABEL.get(idea['market'], idea['market'])}{demo}\n\n"
+            f"Первый рынок: {config.MARKET_LABEL.get(idea['market'], idea['market'])}{demo}\n"
+            f"{explain(sc, report)}\n"
+            f"🔗 <a href=\"{html.escape(link)}\">Открыть полный разбор</a>\n\n"
             f"<i>Ответьте на это сообщение, чтобы уточнить идею.</i>")
-    send(user_id, text, f"ready:{idea_id}:v{version}", idea_id, ("📊 Полный разбор", idea_link(idea_id)))
+    send(user_id, text, f"ready:{idea_id}:v{version}", idea_id, ("📊 Полный разбор", link))
+
+
+def _cut(s, n=200):
+    s = " ".join(str(s or "").split())
+    return s if len(s) <= n else s[:n - 1].rstrip() + "…"
+
+
+def explain(sc: dict, report: dict) -> str:
+    """Короткое «почему» для карточки в Telegram: из оценки и обязательных условий, без новых запросов."""
+    per = sc.get("per_market") or {}
+    if not per:
+        return ""
+    lines = ["", "По рынкам: " + " · ".join(
+        f"{config.MARKET_LABEL[mk]} {per[mk]['score']:.1f}" for mk in config.MARKETS if mk in per)]
+    best = per.get(sc.get("market")) or max(per.values(), key=lambda p: p.get("score") or 0)
+    gates = best.get("gates") or []
+    verdict = sc.get("verdict")
+    reasons = []
+    if verdict == "reject":
+        reasons = [g["note"] for g in gates if g["status"] == "fail_hard"]
+    elif verdict == "improve":
+        reasons = [g["note"] for g in gates if g["status"] == "fail_soft"]
+    elif verdict == "insufficient":
+        for g in gates:
+            if g["key"] == "economics" and g["status"] == "unknown":
+                reasons.append(g["note"])
+        if best.get("observations", 0) < 3:
+            reasons.append(f"мало подтверждённых данных: {best.get('observations', 0)} наблюдений с источником")
+    if not reasons:
+        mr = (report.get("market") or {}).get("market_reasoning")
+        if mr:
+            reasons = [mr]
+    if reasons:
+        lines.append("Почему: " + html.escape(_cut("; ".join(reasons), 260)))
+    mrep = report.get("market") or {}
+    if mrep.get("main_risk"):
+        lines.append("Риск: " + html.escape(_cut(mrep["main_risk"], 180)))
+    ns = mrep.get("next_step") or {}
+    if ns.get("action"):
+        lines.append("Шаг: " + html.escape(_cut(ns["action"], 160)))
+    return "\n".join(lines)
 
 
 def answer(user_id: int, idea_id: int, text: str, dedupe_key: str):
