@@ -31,6 +31,7 @@ if [ -z "$SITE_ADDRESS_VAL" ] && [[ "$SITE_URL_VAL" == https://* ]]; then
 fi
 SITE_ADDRESS_VAL=$(echo "$SITE_ADDRESS_VAL" | sed -E 's#^https?://##; s#/.*$##')
 sed -i '/^SITE_ADDRESS=/d' .env && echo "SITE_ADDRESS=$SITE_ADDRESS_VAL" >> .env
+export SITE_ADDRESS="$SITE_ADDRESS_VAL"   # переменная окружения сессии важнее .env для docker compose
 echo "== Домен для HTTPS: ${SITE_ADDRESS_VAL:-не задан (только http)}"
 echo "== SITE_URL начинается с https: $([[ "$SITE_URL_VAL" == https://* ]] && echo да || echo нет)"
 
