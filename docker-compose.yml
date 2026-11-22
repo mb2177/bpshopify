@@ -1,0 +1,35 @@
+services:
+  web:
+    build: .
+    command: uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="*"
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: python -m app.worker
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+
+  bot:
+    build: .
+    command: python -m app.bot
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [web]
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

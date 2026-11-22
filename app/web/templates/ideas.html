@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "_macros.html" as M %}
+{% block content %}
+<h1>{{ {'projects':'Проекты','archived':'Архив','daily':'Идеи дня'}.get(f, 'Все идеи') }}</h1>
+<div class="card">
+  <form class="row" method="get" action="/ideas">
+    <input type="hidden" name="f" value="{{ f }}">
+    <input name="q" value="{{ q }}" placeholder="Поиск по названию" style="flex:1;min-width:180px">
+    <button class="btn">Найти</button>
+  </form>
+  <div class="row small" style="margin-top:10px">
+    {% for key, label in [('all','Активные'),('projects','⭐ Проекты'),('daily','Идеи дня'),('archived','Архив')] %}
+      <a class="badge {{ '' if f==key else 'b-muted' }}" href="/ideas?f={{ key }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+</div>
+<div class="card">
+  {% for i in rows %}{{ M.idea_row(i) }}{% else %}<p class="muted">Ничего не найдено.</p>{% endfor %}
+</div>
+{% endblock %}

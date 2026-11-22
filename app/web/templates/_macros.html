@@ -1,0 +1,39 @@
+{% macro score_badge(score, big=False) -%}
+{%- if score is none -%}<span class="muted">—</span>
+{%- else -%}{% set cls = 's-good' if score >= 7 else ('s-warn' if score >= 5 else 's-bad') %}
+<span class="{{ 'score ' if big }}{{ cls }}">{{ '%.1f'|format(score) }}{% if big %}<small>/10</small>{% endif %}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro verdict_badge(v) -%}
+{% set cls = {'тестировать':'b-good','доработать':'b-warn','наблюдать':'b-muted','отклонить':'b-bad','недостаточно данных':'b-muted'} %}
+<span class="badge {{ cls.get(v, '') }}">{{ v or '—' }}</span>
+{%- endmacro %}
+
+{% macro type_badge(t) -%}
+{% set cls = {'observation':'b-good','estimate':'b-warn','assumption':'b-muted'} %}
+<span class="badge {{ cls.get(t, 'b-muted') }}">{{ TYPE_LABEL.get(t, t or 'н/д') }}</span>
+{%- endmacro %}
+
+{% macro status_badge(s) -%}
+{% set cls = {'ready':'b-good','partial':'b-warn','failed':'b-bad','cancelled':'b-muted','researching':'','queued':''} %}
+<span class="badge {{ cls.get(s, '') }}">{% if s in ('researching','queued') %}<span class="spinner"></span> {% endif %}{{ STATUS_LABEL.get(s, s) }}</span>
+{%- endmacro %}
+
+{% macro src(url, label=None) -%}
+{%- if url and (url.startswith('http://') or url.startswith('https://')) -%}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label or (url.split('/')[2] if url.count('/')>=2 else url) }}</a>
+{%- elif url -%}<span class="muted">{{ url }}</span>{%- else -%}<span class="muted">нет источника</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro idea_row(i) -%}
+<div class="idea-row">
+  <div class="sc">{{ score_badge(i.score) }}</div>
+  <div class="t">
+    <a href="/ideas/{{ i.id }}">#{{ i.id }} {{ i.title }}</a>
+    {% if i.is_project %}<span class="badge">⭐ проект</span>{% endif %}
+    {% if i.is_demo %}<span class="badge b-warn">ДЕМО</span>{% endif %}
+    <div class="small muted">{{ MARKET_LABEL.get(i.market, '—') }} · {{ {'telegram':'Telegram','web':'сайт','daily':'идея дня'}.get(i.origin, i.origin) }} · {{ (i.updated_at or '')[:16]|replace('T',' ') }} UTC</div>
+  </div>
+  <div class="nowrap">{% if i.status in ('ready','partial') %}{{ verdict_badge(i.verdict) }}{% else %}{{ status_badge(i.status) }}{% endif %}</div>
+</div>
+{%- endmacro %}

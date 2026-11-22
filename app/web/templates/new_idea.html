@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Проверить идею</h1>
+<div class="card" style="max-width:720px">
+  <form method="post" action="/ideas/new" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Идея: текст, описание товара, ссылки</label>
+    <textarea name="text" placeholder="Например: кастомные футболки для свадеб и девичников. https://..."></textarea>
+    <label>Где искать конкурентов (необязательно)</label>
+    <input name="region" placeholder="Дубай, Amazon.ae, Нью-Йорк, вся Америка…">
+    <label>Фото товара (необязательно, до 4)</label>
+    <input type="file" name="photos" accept="image/*" multiple>
+    <p class="small muted">По фото бот описывает товар, но не подтверждает материалы, себестоимость и производителя.</p>
+    <button class="btn primary" type="submit">Запустить исследование</button>
+  </form>
+</div>
+{% endblock %}

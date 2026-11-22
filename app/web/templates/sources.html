@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Источники данных</h1>
+<p class="muted">Статусы честные: «ручной импорт» не работает сам. Бот не обходит авторизацию, CAPTCHA и ограничения сайтов.</p>
+{% set cls = {'автоматически':'b-good','нужен ключ':'b-warn','ручной импорт':'b-muted','недоступно':'b-bad','после запуска магазина':'b-muted'} %}
+{% for p in passports %}
+<div class="card">
+  <div class="row" style="justify-content:space-between"><h2 style="margin:0">{{ p.name }}</h2><span class="badge {{ cls.get(p.status,'') }}">{{ p.status }}</span></div>
+  <p class="small">{{ p.what }}</p>
+  <div class="kv small">
+    <div>Доступ</div><div>{{ p.access }}</div>
+    <div>Бесплатная квота / цена</div><div>{{ p.free_quota }}</div>
+    <div>Коммерческое использование</div><div>{{ p.commercial }}</div>
+    <div>Покрытие</div><div>{{ p.coverage }}</div>
+    <div>Поля</div><div>{{ p.fields }}</div>
+    <div>Обновление</div><div>{{ p.freshness }}</div>
+    <div>Документация</div><div>{% if p.docs.startswith('http') %}<a href="{{ p.docs }}" target="_blank" rel="noopener">{{ p.docs }}</a>{% else %}{{ p.docs }}{% endif %}</div>
+    <div>Последняя успешная проверка</div><div>{{ (p.check.get('last_ok_at') or 'не было')[:16]|replace('T',' ') }}{% if p.check.get('last_error') %}<br><span class="s-bad">Ошибка {{ p.check.last_error_at[:16]|replace('T',' ') }}: {{ p.check.last_error }}</span>{% endif %}</div>
+    {% if p.status == 'нужен ключ' and p.needs %}<div>Что нужно</div><div>Добавить <code>{{ p.needs }}</code> в настройки сервера (.env){% if p.get('not_in_mvp') %} — в MVP не используется{% endif %}</div>{% endif %}
+  </div>
+  {% if p.get('howto') %}<p class="small" style="margin-top:8px"><b>Как подключить:</b> {{ p.howto }}</p>{% endif %}
+</div>
+{% endfor %}
+{% endblock %}

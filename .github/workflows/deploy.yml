@@ -1,0 +1,66 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy code to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "app,deploy,requirements.txt,Dockerfile,docker-compose.yml,Caddyfile,.dockerignore"
+          target: /opt/shopify-bot
+          rm: false
+
+      - name: Write .env and start
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          SITE_ADDRESS: ${{ secrets.SITE_ADDRESS }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          envs: SITE_URL,SITE_ADDRESS,ADMIN_EMAIL,ADMIN_PASSWORD,SECRET_KEY,TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,OPENAI_API_KEY
+          command_timeout: 20m
+          script: |
+            set -e
+            cd /opt/shopify-bot
+            umask 077
+            : > .env
+            for v in SITE_URL SITE_ADDRESS ADMIN_EMAIL ADMIN_PASSWORD SECRET_KEY TELEGRAM_BOT_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY; do
+              printf '%s=%s\n' "$v" "${!v}" >> .env
+            done
+            echo "FAKE_LLM=0" >> .env
+            bash deploy/server.sh

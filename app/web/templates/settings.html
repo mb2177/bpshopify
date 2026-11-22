@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Настройки</h1>
+{% if saved %}<div class="notice n-info">Сохранено.</div>{% endif %}
+
+<section id="profile" class="card">
+  <h2>Профиль (опрос первого запуска)</h2>
+  <p class="small muted">Бот не придумывает ответы за вас: пустые поля помечаются в разборах как пробелы. Обязательные условия (бюджет, часы) проверяются по этим данным.</p>
+  <form method="post" action="/settings/profile">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="grid g2">
+    {% for key, label, kind in fields %}
+      <div><label>{{ label }}</label>
+      {% if kind == 'number' %}<input name="{{ key }}" value="{{ profile.get(key, '') }}" inputmode="decimal">
+      {% else %}<textarea name="{{ key }}" style="min-height:60px">{{ profile.get(key, '') }}</textarea>{% endif %}</div>
+    {% endfor %}
+    </div>
+    <button class="btn primary" style="margin-top:12px">Сохранить профиль</button>
+  </form>
+</section>
+
+<section id="general" class="card">
+  <h2>Ежедневное исследование и бюджет</h2>
+  <form method="post" action="/settings/general">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label style="color:var(--text)"><input type="checkbox" name="daily_enabled" style="width:auto" {{ 'checked' if s.daily_enabled }}> Каждый день искать идею и присылать в Telegram</label>
+    <div class="grid g3">
+      <div><label>Время</label><input type="time" name="daily_time" value="{{ s.daily_time }}"></div>
+      <div><label>Часовой пояс</label><select name="timezone">{% for tz in timezones %}<option {{ 'selected' if s.timezone==tz }}>{{ tz }}</option>{% endfor %}</select></div>
+      <div><label>Лимит расходов в месяц, USD</label><input name="monthly_budget_usd" value="{{ s.monthly_budget_usd }}" inputmode="decimal"></div>
+      <div><label>Лимит на одно исследование, USD</label><input name="per_idea_budget_usd" value="{{ s.per_idea_budget_usd }}" inputmode="decimal"></div>
+    </div>
+    <p class="small muted">Потрачено в этом месяце: {{ '%.2f'|format(spend) }} USD (модель + веб-поиск + голосовые). Следующий ежедневный запуск: {{ next_run }}. Платные исследовательские сервисы не подключены.</p>
+    <button class="btn primary">Сохранить</button>
+  </form>
+</section>
+
+<section id="telegram" class="card">
+  <h2>Telegram</h2>
+  {% if not tg_token %}<div class="notice n-warn">TELEGRAM_BOT_TOKEN не задан на сервере.</div>{% endif %}
+  {% if u.tg_chat_id %}
+    <p>✅ Бот привязан к чату <code>{{ u.tg_chat_id }}</code>.</p>
+    <div class="row">
+      <form method="post" action="/settings/telegram"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="action" value="test"><button class="btn">Отправить тестовое сообщение</button></form>
+      <form method="post" action="/settings/telegram" onsubmit="return confirm('Отвязать бота?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="action" value="unlink"><button class="btn danger">Отвязать</button></form>
+    </div>
+  {% else %}
+    <p>Откройте своего бота в Telegram и отправьте:</p>
+    <pre>/start {{ u.tg_bind_code }}</pre>
+    <p class="small muted">Код одноразовый: после привязки бот отвечает только вам, остальным — «доступ закрыт».</p>
+    <form method="post" action="/settings/telegram"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="action" value="newcode"><button class="btn sm">Новый код</button></form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Прочее</h2>
+  <p><a href="/sources">Источники данных и их статус</a> · <a href="/logs">Журнал задач, ошибок и расходов</a></p>
+  <p class="small muted">Shopify и Microsoft Clarity подключаются после запуска магазина (отдельная интеграция с минимальными правами).</p>
+</section>
+{% endblock %}

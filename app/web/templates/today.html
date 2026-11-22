@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% import "_macros.html" as M %}
+{% block content %}
+<h1>Сегодня</h1>
+{% if profile_empty %}<div class="notice n-warn">Заполните <a href="/settings#profile">профиль</a> (бюджет, часы, навыки, страна, платежи) — без него бот не придумывает ограничения и помечает их как пробелы.</div>{% endif %}
+{% if not tg_linked %}<div class="notice n-info">Telegram не привязан: <a href="/settings#telegram">Настройки → Telegram</a>.</div>{% endif %}
+
+<div class="grid g2">
+  <div class="card">
+    <h2>Идея дня</h2>
+    {% if daily_idea %}
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div style="flex:1;min-width:200px">
+          <a href="/ideas/{{ daily_idea.id }}" style="font-weight:700;font-size:17px">#{{ daily_idea.id }} {{ daily_idea.title }}</a>
+          <div class="small muted">{{ daily.run_date }} · {{ MARKET_LABEL.get(daily_idea.market, '—') }}</div>
+        </div>
+        <div>{{ M.score_badge(daily_idea.score, True) }}</div>
+      </div>
+      <p>{% if daily_idea.status in ('ready','partial') %}{{ M.verdict_badge(daily_idea.verdict) }}{% else %}{{ M.status_badge(daily_idea.status) }}{% endif %}</p>
+      {% if daily_scoring %}
+        {% set pm = daily_scoring.per_market.get(daily_scoring.market) if daily_scoring.market in MARKETS else None %}
+        <p class="small">{{ daily_scoring.market_note or '' }}</p>
+      {% endif %}
+      <a class="btn" href="/ideas/{{ daily_idea.id }}">Полный разбор →</a>
+    {% elif daily %}
+      <p><b>{{ daily.run_date }}:</b> достойной идеи нет.</p><p class="muted">{{ daily.summary }}</p>
+    {% else %}
+      <p class="muted">Ежедневных исследований ещё не было.</p>
+    {% endif %}
+    {% if candidates %}
+      <details style="margin-top:12px"><summary>Рассмотренные кандидаты ({{ candidates|length }})</summary>
+        {% for c in candidates %}<div style="margin-top:8px"><b>{{ c.title }}</b> <span class="small muted">{{ MARKET_LABEL.get(c.market_guess, '') }}</span><br><span class="small">{{ c.why }}</span>{% if c.weakness %}<br><span class="small muted">Слабость: {{ c.weakness }}</span>{% endif %}</div>{% endfor %}
+      </details>
+    {% endif %}
+    <p class="small muted" style="margin-top:12px">Последний успешный запуск: {{ (last_ok or 'ещё не было')[:16]|replace('T',' ') }} · Следующий: {{ next_run }}</p>
+  </div>
+
+  <div class="card">
+    <h2>Сейчас</h2>
+    {% if active %}
+      {% for j in active %}<div class="small" style="margin-bottom:6px"><span class="spinner"></span> {{ {'research':'Исследование','refine':'Уточнение','daily':'Идея дня'}.get(j.kind) }} {% if j.idea_id %}<a href="/ideas/{{ j.idea_id }}">#{{ j.idea_id }} {{ j.title or '' }}</a>{% endif %} — {{ 'в очереди' if j.status=='queued' else 'выполняется' }}</div>{% endfor %}
+    {% else %}<p class="muted">Ничего не исследуется.</p>{% endif %}
+    <p class="small muted">Расходы на модель и поиск в этом месяце: <b>{{ '%.2f'|format(spend) }} USD</b> из лимита {{ '%.2f'|format(settings.monthly_budget_usd) }} USD</p>
+    <a class="btn primary" href="/ideas/new">＋ Проверить идею</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between"><h2 style="margin:0">Последние идеи</h2><a href="/ideas">Все →</a></div>
+  {% for i in recent %}{{ M.idea_row(i) }}{% else %}<p class="muted">Пока пусто. Пришлите идею боту или нажмите «Проверить идею».</p>{% endfor %}
+</div>
+{% endblock %}

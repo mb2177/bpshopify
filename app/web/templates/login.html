@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:60px auto">
+  <h1>Вход</h1>
+  {% if no_admin %}<div class="notice n-warn">ADMIN_PASSWORD не задан в .env — вход невозможен.</div>{% endif %}
+  {% if error == '1' %}<div class="notice n-bad">Неверный e-mail или пароль.</div>{% endif %}
+  {% if error == '2' %}<div class="notice n-bad">Ссылка входа устарела. Отправьте боту /login ещё раз.</div>{% endif %}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>E-mail</label><input name="email" type="email" required autocomplete="username">
+    <label>Пароль</label><input name="password" type="password" required autocomplete="current-password">
+    <div style="margin-top:16px"><button class="btn primary" type="submit">Войти</button></div>
+  </form>
+  <p class="small muted">Или отправьте боту команду /login — придёт одноразовая ссылка входа.</p>
+</div>
+{% endblock %}
