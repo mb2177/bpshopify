@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Проверить идею</h1>
-<div class="card" style="max-width:720px">
+<div class="pagehead"><div><h1>Проверить идею</h1><div class="sub">Опишите товар как можно конкретнее: что это, для кого, по какому поводу покупают.</div></div></div>
+<div class="surface" style="max-width:720px">
   <form method="post" action="/ideas/new" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <label>Идея: текст, описание товара, ссылки</label>

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_macros.html" as M %}
 {% block content %}
-<h1>{{ {'projects':'Проекты','archived':'Архив','daily':'Идеи дня'}.get(f, 'Все идеи') }}</h1>
+<div class="pagehead"><div><h1>{{ {'projects':'Проекты','archived':'Архив','daily':'Идеи дня'}.get(f, 'Идеи') }}</h1><div class="sub">{{ rows|length }} {{ 'идея' if rows|length % 10 == 1 and rows|length % 100 != 11 else 'идей' }}</div></div><a class="btn primary" href="/ideas/new">Проверить идею</a></div>
 <div class="card">
   <form class="row" method="get" action="/ideas">
     <input type="hidden" name="f" value="{{ f }}">
@@ -9,12 +9,12 @@
     <button class="btn">Найти</button>
   </form>
   <div class="row small" style="margin-top:10px">
-    {% for key, label in [('all','Активные'),('projects','⭐ Проекты'),('daily','Идеи дня'),('archived','Архив')] %}
-      <a class="badge {{ '' if f==key else 'b-muted' }}" href="/ideas?f={{ key }}">{{ label }}</a>
+    {% for key, label in [('all','Активные'),('projects','Проекты'),('daily','Идеи дня'),('archived','Архив')] %}
+      <a class="tag {{ 'on' if f==key }}" href="/ideas?f={{ key }}">{{ label }}</a>
     {% endfor %}
   </div>
 </div>
 <div class="card">
-  {% for i in rows %}{{ M.idea_row(i) }}{% else %}<p class="muted">Ничего не найдено.</p>{% endfor %}
+  {% for i in rows %}{{ M.idea_row(i) }}{% else %}<p class="muted" style="margin:0">Здесь пусто. Пришлите идею боту в Telegram или нажмите «Проверить идею».</p>{% endfor %}
 </div>
 {% endblock %}

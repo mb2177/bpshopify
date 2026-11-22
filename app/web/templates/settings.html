@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Настройки</h1>
+<div class="pagehead"><div><h1>Настройки</h1><div class="sub">Профиль, расписание, бюджет и Telegram</div></div><a class="btn ghost" href="/logs">Журнал и расходы</a></div>
 {% if saved %}<div class="notice n-info">Сохранено.</div>{% endif %}
 
 <section id="profile" class="card">
@@ -39,7 +39,7 @@
   <h2>Telegram</h2>
   {% if not tg_token %}<div class="notice n-warn">TELEGRAM_BOT_TOKEN не задан на сервере.</div>{% endif %}
   {% if u.tg_chat_id %}
-    <p>✅ Бот привязан к чату <code>{{ u.tg_chat_id }}</code>.</p>
+    <p><span class="st go">Подключён</span>&nbsp; бот привязан к чату <code>{{ u.tg_chat_id }}</code>.</p>
     <div class="row">
       <form method="post" action="/settings/telegram"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="action" value="test"><button class="btn">Отправить тестовое сообщение</button></form>
       <form method="post" action="/settings/telegram" onsubmit="return confirm('Отвязать бота?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="action" value="unlink"><button class="btn danger">Отвязать</button></form>

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Журнал</h1>
+<div class="pagehead"><div><h1>Журнал</h1><div class="sub">Задачи, расходы на модель и поиск, ошибки</div></div></div>
 <div class="card"><h2>Задачи</h2><div class="tw"><table><tr><th>#</th><th>Тип</th><th>Идея</th><th>Статус</th><th>Попыток</th><th>Создана</th><th>Ошибка</th></tr>
 {% for j in jobs %}<tr><td>{{ j.id }}</td><td>{{ j.kind }}</td><td>{% if j.idea_id %}<a href="/ideas/{{ j.idea_id }}">#{{ j.idea_id }}</a>{% endif %}</td><td>{{ j.status }}</td><td>{{ j.attempts }}</td><td class="small">{{ j.created_at[:16]|replace('T',' ') }}</td><td class="small">{{ (j.error or '')[:200] }}</td></tr>{% endfor %}
 </table></div></div>

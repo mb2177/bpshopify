@@ -9,171 +9,189 @@
 {% set default_tab = (chosen|lower) if chosen in MARKETS else 'usa' %}
 
 <style>
-.tabbar{display:flex;gap:6px;overflow-x:auto;margin:0 0 14px;padding:6px 0;position:sticky;top:52px;background:var(--bg);z-index:5}
-.tabbar button{font:inherit;white-space:nowrap;cursor:pointer;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--text)}
-.tabbar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.tabbar button .sc{opacity:.8;font-size:13px;margin-left:4px}
+.memo{margin-bottom:22px}
+.memo .meta{font-size:13px;color:var(--faint)}
+.memo h1{margin:6px 0 10px;max-width:22ch;font-size:34px}
+@media (max-width:640px){.memo h1{font-size:26px}}
+.verdict{display:grid;grid-template-columns:auto 1fr;gap:6px 28px;align-items:end;margin:18px 0 4px;max-width:640px}
+.verdict .lbl{font-size:13px;color:var(--muted)}
+.verdict .big{font:600 15px/1.3 var(--sans)}
+.lead{font:400 18px/1.65 var(--serif);max-width:64ch;margin:14px 0 0}
+@media (max-width:640px){.lead{font-size:16.5px}}
+.seg{display:flex;gap:4px;overflow-x:auto;margin:6px 0 18px;padding:4px;background:var(--sunk);border-radius:12px;position:sticky;top:8px;z-index:6;scrollbar-width:none}
+.seg::-webkit-scrollbar{display:none}
+.seg button{font:500 14px var(--sans);white-space:nowrap;cursor:pointer;padding:8px 14px;border:0;border-radius:9px;background:transparent;color:var(--muted)}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--line)}
+.seg button .sc{margin-left:6px;font-weight:600}
+.seg .gap{width:1px;background:var(--line);margin:6px 4px;flex:none}
 .panel{display:none}.panel.on{display:block}
-.pitch p{margin:0 0 14px;font-size:16px;line-height:1.6}.pitch b.l{display:block;font-size:13px;color:var(--muted);font-weight:600;margin-bottom:2px}
-.lead{font-size:17px;line-height:1.6}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
-.tile{background:var(--bg);border-radius:10px;padding:10px 12px}.tile .k{font-size:12px;color:var(--muted)}.tile .v{font-size:18px;font-weight:700;margin-top:2px}
-.tile .s{font-size:12px;color:var(--muted)}
+.memo-dl{display:grid;grid-template-columns:170px 1fr;gap:14px 24px;margin:0}
+.memo-dl dt{color:var(--muted);font-size:14px;padding-top:2px}
+.memo-dl dd{margin:0;font:400 16px/1.6 var(--serif);max-width:62ch}
+@media (max-width:640px){.memo-dl{grid-template-columns:1fr;gap:2px}.memo-dl dd{margin-bottom:12px}}
+.one{font:500 20px/1.45 var(--serif);margin:0 0 20px;max-width:56ch}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px var(--line)}
+.tile{background:var(--surface);padding:14px 16px}.tile .k{font-size:12.5px;color:var(--muted)}
+.tile .v{font-size:20px;font-weight:600;margin-top:4px;letter-spacing:-.01em}.tile .s{font-size:12px;color:var(--faint);margin-top:2px}
+.flow{font-size:15px;line-height:1.7}
+.flow b{font-weight:600}
 </style>
 
 {# ---------- шапка ---------- #}
-<div class="card">
-  <div class="row" style="justify-content:space-between;align-items:flex-start">
-    <div style="flex:1;min-width:240px">
-      <div class="small muted">Идея #{{ idea.id }} · {{ {'telegram':'из Telegram','web':'с сайта','daily':'идея дня'}.get(idea.origin) }} · {{ idea.created_at[:16]|replace('T',' ') }} UTC</div>
-      <h1 style="margin:4px 0">{{ idea.title }}</h1>
-      <div class="row">
-        {{ M.status_badge(idea.status) }}
-        {% if idea.is_project %}<span class="badge">⭐ проект</span>{% endif %}
-        {% if idea.archived %}<span class="badge b-muted">в архиве</span>{% endif %}
-        {% if idea.is_demo or report.get('demo') %}<span class="badge b-warn">ДЕМО-данные</span>{% endif %}
-        {% if report.get('deep') %}<span class="badge">🔬 Opus</span>{% endif %}
-        {% if ver %}<span class="badge b-muted">версия {{ ver.version }}{% if not is_latest %} (старая){% endif %}</span>{% endif %}
-      </div>
-    </div>
-    {% if ver %}
-    <div style="text-align:right">
-      {{ M.score_badge(sc.get('score'), True) }}
-      <div style="margin-top:6px">{{ M.verdict_badge(sc.get('verdict_label')) }}</div>
-      <div class="small" style="margin-top:6px">Первый рынок: <b>{{ sc.get('market_label') }}</b></div>
-    </div>
-    {% endif %}
+<header class="memo">
+  <div class="meta">Идея #{{ idea.id }}, {{ {'telegram':'из Telegram','web':'с сайта','daily':'идея дня'}.get(idea.origin) }}, {{ idea.created_at[:10] }}{% if ver %}, версия {{ ver.version }}{% endif %}</div>
+  <h1>{{ idea.title }}</h1>
+  <div class="row">
+    {% if idea.status not in ('ready',) %}{{ M.status_badge(idea.status) }}{% endif %}
+    {% if idea.is_project %}<span class="tag ledger">В проектах</span>{% endif %}
+    {% if idea.archived %}<span class="tag">В архиве</span>{% endif %}
+    {% if idea.is_demo or report.get('demo') %}<span class="tag warn">Демо-данные</span>{% endif %}
+    {% if report.get('deep') %}<span class="tag ledger">Глубокий разбор, Opus</span>{% endif %}
   </div>
 
+  {% if ver %}
+  <div class="verdict">
+    <div>{{ M.score_badge(sc.get('score'), True) }}</div>
+    <div class="row" style="gap:6px 28px">
+      <div><div class="lbl">Вывод</div><div class="big">{{ M.verdict_badge(sc.get('verdict_label')) }}</div></div>
+      <div><div class="lbl">Первый рынок</div><div class="big">{{ sc.get('market_label') }}</div></div>
+    </div>
+  </div>
+  <div style="max-width:640px">{{ M.scale(sc.get('score')) }}</div>
+  {% endif %}
+
   {% if mrep.get('idea_plain') %}
-    <h3>Идея простыми словами</h3>
-    <p class="lead" style="margin:0">{{ mrep.idea_plain }}</p>
-    {% if mrep.get('product_note') %}<p class="small muted">{{ mrep.product_note }}</p>{% endif %}
+    <p class="lead">{{ mrep.idea_plain }}</p>
+    {% if mrep.get('product_note') %}<p class="small muted" style="margin-top:8px">{{ mrep.product_note }}</p>{% endif %}
   {% elif mrep.get('product') %}
-    <h3>Идея</h3>
-    <p class="lead" style="margin:0">{{ mrep.product }}{% if mrep.get('buyer') %} — для: {{ mrep.buyer }}{% endif %}</p>
+    <p class="lead">{{ mrep.product }}{% if mrep.get('buyer') %}. Для кого: {{ mrep.buyer }}{% endif %}</p>
   {% endif %}
 
   {% if idea.status in ('queued','researching') %}
-    <div class="notice n-info" style="margin-top:12px"><span class="spinner"></span> {{ idea.stage or 'В очереди' }} — страница обновится сама.
-      {% if job %}<form method="post" action="/ideas/{{ idea.id }}/cancel" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm danger">Остановить</button></form>{% endif %}
+    <div class="notice n-info" style="margin-top:16px"><span class="spinner"></span> {{ idea.stage or 'В очереди' }}. Страница обновится сама.
+      {% if job %}<form method="post" action="/ideas/{{ idea.id }}/cancel" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm danger" style="margin-left:8px">Остановить</button></form>{% endif %}
     </div>
   {% elif idea.status == 'failed' %}
-    <div class="notice n-bad" style="margin-top:12px">{{ idea.stage or 'Ошибка исследования' }}. <a href="/logs">Журнал</a></div>
+    <div class="notice n-bad" style="margin-top:16px">{{ idea.stage or 'Ошибка исследования' }}. <a href="/logs">Открыть журнал</a></div>
   {% endif %}
-  {% if not is_latest %}<div class="notice n-warn" style="margin-top:12px">Это старая версия. <a href="/ideas/{{ idea.id }}">Открыть актуальную</a></div>{% endif %}
-  {% for p in report.get('partial') or [] %}<div class="notice n-warn" style="margin-top:12px">⚠️ {{ p }}</div>{% endfor %}
+  {% if not is_latest %}<div class="notice n-warn" style="margin-top:16px">Это старая версия. <a href="/ideas/{{ idea.id }}">Открыть актуальную</a></div>{% endif %}
+  {% for p_ in report.get('partial') or [] %}<div class="notice n-warn" style="margin-top:16px">{{ p_ }}</div>{% endfor %}
 
-  <div class="row" style="margin-top:12px">
-    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="project"><button class="btn sm">{{ '★ Убрать из проектов' if idea.is_project else '☆ В проекты' }}</button></form>
-    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="archive"><button class="btn sm">{{ 'Из архива' if idea.archived else 'В архив' }}</button></form>
+  <div class="row" style="margin-top:18px;gap:6px">
     {% if idea.status not in ('queued','researching') %}
-    <form method="post" action="/ideas/{{ idea.id }}/rerun" onsubmit="return confirm('Полный повторный разбор с поиском на Sonnet (≈ $0.5–1). Продолжить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm">↻ Обновить разбор</button></form>
-    <form method="post" action="/ideas/{{ idea.id }}/deep" onsubmit="return confirm('Глубокий разбор на Opus — примерно вдвое дороже (≈ $1–2). Ваши правки экономики сохранятся. Запустить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm primary">🔬 Глубокий разбор (Opus)</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/deep" onsubmit="return confirm('Глубокий разбор на Opus стоит примерно вдвое дороже, ≈ $1–2. Ваши правки экономики сохранятся. Запустить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn primary sm">Глубокий разбор (Opus)</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/rerun" onsubmit="return confirm('Повторный разбор с поиском на Sonnet, ≈ $0.5–1. Продолжить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm">Обновить разбор</button></form>
     {% endif %}
+    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="project"><button class="btn ghost sm">{{ 'Убрать из проектов' if idea.is_project else 'В проекты' }}</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="archive"><button class="btn ghost sm">{{ 'Вернуть из архива' if idea.archived else 'В архив' }}</button></form>
   </div>
-</div>
+</header>
 
 {% if ver %}
 {# ---------- вкладки ---------- #}
-<div class="tabbar" id="tabbar">
-  {% for mk in MARKETS %}<button data-tab="{{ mk|lower }}">{{ MARKET_LABEL[mk] }}{% if mk == chosen %} ★{% endif %}{% if per.get(mk) %}<span class="sc">{{ '%.1f'|format(per[mk].score) }}</span>{% endif %}</button>{% endfor %}
+<div class="seg" id="tabbar">
+  {% for mk in MARKETS %}<button data-tab="{{ mk|lower }}">{{ MARKET_LABEL[mk] }}{% if per.get(mk) %}<span class="sc t-{{ M.tone(per[mk].score)|trim }}">{{ '%.1f'|format(per[mk].score) }}</span>{% endif %}</button>{% endfor %}
   <button data-tab="compare">Сравнение</button>
+  <span class="gap"></span>
   <button data-tab="production">Производство</button>
-  <button data-tab="data">Данные и источники</button>
+  <button data-tab="data">Данные</button>
   <button data-tab="history">История</button>
 </div>
 
 {# ---------- панель рынка ---------- #}
+{% set FS = {'ok':('go','можно'),'risk':('wait','есть риск'),'blocked':('stop','нельзя'),'unknown':('unk','нет данных')} %}
 {% for mk in MARKETS %}
 {% set m = markets.get(mk) or {} %}
 {% set pm = per.get(mk) or {} %}
 {% set em = econ.get('markets', {}).get(mk, {}) %}
 {% set mi = (econ_inputs.get('markets') or {}).get(mk) or {} %}
 {% set pitch = m.get('pitch') or {} %}
+{% set s = m.get('seasonality') or {} %}
 <div class="panel" id="panel-{{ mk|lower }}">
+ <div class="surface">
 
-  <section class="card pitch">
-    <div class="row" style="justify-content:space-between">
-      <h2 style="margin:0">{{ MARKET_LABEL[mk] }}: суть</h2>
-      <div>{{ M.score_badge(pm.get('score')) }} {{ M.verdict_badge(VERD.get(pm.get('verdict'))) }}</div>
+  <section class="sec">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+      <h2 style="margin:0">{{ MARKET_LABEL[mk] }}</h2>
+      <div class="row" style="gap:14px">{{ M.verdict_badge(VERD.get(pm.get('verdict'))) }}<span style="font-weight:600">{{ M.score_badge(pm.get('score')) }}<span class="faint"> / 10</span></span></div>
     </div>
     {% if pitch %}
-      {% if pitch.get('one_liner') %}<p class="lead" style="margin-top:12px"><b>{{ pitch.one_liner }}</b></p>{% endif %}
+      {% if pitch.get('one_liner') %}<p class="one">{{ pitch.one_liner }}</p>{% endif %}
+      <dl class="memo-dl">
       {% for key, label in [('product','Что продаём'),('customer','Кому'),('why_buy','Почему купят у нас'),('how_it_works','Как это работает'),('money','Деньги'),('start','Что нужно для старта'),('verdict_plain','Вывод')] %}
-        {% if pitch.get(key) %}<p><b class="l">{{ label }}</b>{{ pitch[key] }}</p>{% endif %}
+        {% if pitch.get(key) %}<dt>{{ label }}</dt><dd>{{ pitch[key] }}</dd>{% endif %}
       {% endfor %}
+      </dl>
     {% else %}
-      <p style="margin-top:12px">{{ m.get('summary') or 'Нет данных по этому рынку.' }}</p>
-      {% if m.get('our_offer') %}<p><b class="l">Наше предложение</b>{{ m.our_offer }}</p>{% endif %}
-      <p class="small muted">Этот разбор сделан до появления раздела «простыми словами». Нажмите «↻ Обновить разбор», чтобы получить понятное объяснение.</p>
+      <p class="one">{{ m.get('summary') or 'По этому рынку данных нет.' }}</p>
+      {% if m.get('our_offer') %}<dl class="memo-dl"><dt>Наше предложение</dt><dd>{{ m.our_offer }}</dd></dl>{% endif %}
+      <p class="small muted" style="margin-top:14px">Этот разбор сделан до появления объяснения простыми словами. Нажмите «Обновить разбор», чтобы его получить.</p>
     {% endif %}
   </section>
 
-  <section class="card">
-    <h2>Ключевые цифры</h2>
+  <section class="sec">
+    <h2>Цифры</h2>
     <div class="tiles">
       {% set pr = m.get('price_range') or {} %}
       <div class="tile"><div class="k">Цены у конкурентов</div><div class="v">{% if pr.get('low') is not none %}{{ money(pr.low, '', 0) }}–{{ money(pr.high, pr.currency, 0) }}{% else %}неизвестно{% endif %}</div></div>
       {% if em.get('status') == 'ok' %}{% set b = em.scenarios.base %}{% set cur = em.currency %}
-        <div class="tile"><div class="k">Остаётся с заказа после рекламы</div><div class="v {{ 's-bad' if b.per_order.CM2 <= 0 }}">{{ money(b.per_order.CM2, cur) }}</div><div class="s">базовый сценарий</div></div>
-        <div class="tile"><div class="k">Прибыль в месяц</div><div class="v {{ 's-bad' if b.operating_profit <= 0 else 's-good' }}">{{ money(b.operating_profit, cur, 0) }}</div><div class="s">при {{ b.orders|int }} заказах</div></div>
-        <div class="tile"><div class="k">Деньги на старт</div><div class="v">{{ money(b.startup_cash_need, cur, 0) }}</div><div class="s">≈ {{ money(b.in_base.startup_cash_need, econ.base_currency, 0) }}</div></div>
+        <div class="tile"><div class="k">Остаётся с заказа</div><div class="v {{ 't-stop' if b.per_order.CM2 <= 0 }}">{{ money(b.per_order.CM2, cur) }}</div><div class="s">после рекламы</div></div>
+        <div class="tile"><div class="k">Прибыль в месяц</div><div class="v {{ 't-stop' if b.operating_profit <= 0 else 't-go' }}">{{ money(b.operating_profit, cur, 0) }}</div><div class="s">при {{ b.orders|int }} заказах</div></div>
+        <div class="tile"><div class="k">Деньги на старт</div><div class="v">{{ money(b.startup_cash_need, cur, 0) }}</div>{% if cur != econ.base_currency %}<div class="s">≈ {{ money(b.in_base.startup_cash_need, econ.base_currency, 0) }}</div>{% endif %}</div>
       {% else %}
-        <div class="tile"><div class="k">Экономика</div><div class="v">не посчитана</div><div class="s">не хватает: {{ (em.get('missing_labels') or [])|join(', ') }}</div></div>
+        <div class="tile" style="grid-column:span 2"><div class="k">Экономика</div><div class="v">не посчитана</div><div class="s">нет данных: {{ (em.get('missing_labels') or [])|join(', ')|lower }}</div></div>
       {% endif %}
-      {% set s = m.get('seasonality') or {} %}
-      <div class="tile"><div class="k">Ближайший пик спроса</div><div class="v">{{ s.get('next_peak_date') or '—' }}</div><div class="s">{{ 'сезонный товар' if s.get('is_seasonal') else 'не сезонный' }}</div></div>
-      <div class="tile"><div class="k">Качество данных</div><div class="v">{{ pm.get('data_quality', '—') }}</div><div class="s">{{ pm.get('observations', 0) }} наблюдений с источником</div></div>
+      <div class="tile"><div class="k">Пик спроса</div><div class="v">{{ s.get('next_peak_date') or 'нет' }}</div><div class="s">{{ 'сезонный товар' if s.get('is_seasonal') else 'круглый год' }}</div></div>
+      <div class="tile"><div class="k">Данные</div><div class="v">{{ pm.get('data_quality', '—')|capitalize }}</div><div class="s">{{ pm.get('observations', 0) }} подтверждений</div></div>
     </div>
   </section>
 
-  <section class="card">
+  <section class="sec">
     <h2>Можно ли запустить</h2>
-    {% for g in pm.get('gates', []) %}<div style="margin:6px 0">{{ GATE_ICON.get(g.status) }} <b>{{ g.label }}</b> — {{ g.note }}</div>{% endfor %}
+    <div>{% for g in pm.get('gates', []) %}{{ M.gate(g) }}{% endfor %}</div>
   </section>
 
-  <section class="card">
+  <section class="sec">
     <h2>Конкуренты</h2>
     {% set comps = m.get('competitors') or [] %}
     {% if comps %}<div class="tw"><table><tr><th>Кто</th><th>Где</th><th>Цена</th><th>Чем отличается</th></tr>
-      {% for c in comps %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small">{{ c.get('platform') or '' }}<div class="muted">{{ c.get('region') or '' }}</div></td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or c.get('assortment') or '' }}</td></tr>{% endfor %}
+      {% for c in comps %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small muted">{{ c.get('platform') or '' }}{% if c.get('region') %}, {{ c.region }}{% endif %}</td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or c.get('assortment') or '' }}</td></tr>{% endfor %}
     </table></div>{% else %}<p class="muted">Конкуренты не найдены.</p>{% endif %}
     {% for cs in report.get('competitor_searches') or [] %}{% if cs.get('market') == mk %}
-      <h3>Поиск: {{ cs.get('region') }} <span class="small muted">{{ (cs.get('searched_at') or '')[:10] }}</span></h3>
+      <h3>{{ cs.get('region') }} <span class="small faint" style="font-weight:400">поиск от {{ (cs.get('searched_at') or '')[:10] }}</span></h3>
       {% if cs.get('summary') %}<p class="small">{{ cs.summary }}</p>{% endif %}
       <div class="tw"><table><tr><th>Кто</th><th>Где</th><th>Цена</th><th>Чем отличается</th></tr>
-      {% for c in cs.get('competitors') or [] %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small">{{ c.get('platform') or '' }}<div class="muted">{{ c.get('region') or '' }}</div></td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or '' }}</td></tr>{% endfor %}
+      {% for c in cs.get('competitors') or [] %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small muted">{{ c.get('platform') or '' }}{% if c.get('region') %}, {{ c.region }}{% endif %}</td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or '' }}</td></tr>{% endfor %}
       </table></div>
     {% endif %}{% endfor %}
-    <form method="post" action="/ideas/{{ idea.id }}/refine" class="row" style="margin-top:12px">
+    <form method="post" action="/ideas/{{ idea.id }}/refine" class="row" style="margin-top:14px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input name="text" placeholder="{{ 'Дубай, Абу-Даби, Amazon.ae…' if mk == 'UAE' else 'Нью-Йорк, Майами, Etsy…' }}" style="flex:1;min-width:180px" required class="region-input" data-market="{{ MARKET_LABEL[mk] }}">
-      <button class="btn">Найти конкурентов здесь</button>
+      <input name="text" placeholder="{{ 'Город или площадка: Абу-Даби, Amazon.ae' if mk == 'UAE' else 'Город или площадка: Майами, Etsy' }}" style="flex:1;min-width:180px" required class="region-input" data-market="{{ MARKET_LABEL[mk] }}">
+      <button class="btn">Найти конкурентов</button>
     </form>
   </section>
 
-  <section class="card">
+  <section class="sec">
     <h2>Спрос и покупатели</h2>
     {% set d = m.get('demand') or {} %}
-    {% if d.get('summary') %}<p>{{ d.summary }}</p>{% endif %}
-    {% if m.get('intent') %}<p><b class="l">Готовность купить</b>{{ m.intent }}</p>{% endif %}
-    {% if s.get('summary') %}<p><b class="l">Сезонность</b>{{ s.summary }}</p>{% endif %}
-    {% if s.get('peaks') %}<p class="small">{% for p in s.peaks %}{{ p.get('event') }} — <b>{{ p.get('date') }}</b>{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
-    {% set segs = (mrep.get('segments') or [])|selectattr('market', 'equalto', mk)|list %}
-    {% if segs %}<h3>Кто покупает</h3>{% for sg in segs %}<p class="small"><b>{{ sg.get('name') }}</b> — {{ sg.get('who') }}. {{ sg.get('why') or '' }} {% if sg.get('price_point') %}Цена: {{ sg.price_point }}.{% endif %} {% if sg.get('where_to_find') %}Где найти: {{ sg.where_to_find }}.{% endif %}</p>{% endfor %}{% endif %}
-    {% set a = m.get('acquisition') or {} %}{% set c = a.get('cac_estimate') or {} %}
-    {% if a.get('channels') or c.get('low') is not none %}<p><b class="l">Как привлекать покупателей</b>{{ (a.get('channels') or [])|join(', ') }}{% if c.get('low') is not none %}. Стоимость привлечения одного покупателя: {{ money(c.low, '', 0) }}–{{ money(c.high, c.currency, 0) }} ({{ TYPE_LABEL.get(c.get('type'), 'оценка') }}){% endif %}</p>{% endif %}
-    {% if m.get('scale_limits') %}<p><b class="l">Что ограничит рост</b>{{ m.scale_limits }}</p>{% endif %}
+    <dl class="memo-dl">
+      {% if d.get('summary') %}<dt>Спрос</dt><dd>{{ d.summary }}</dd>{% endif %}
+      {% if m.get('intent') %}<dt>Готовность купить</dt><dd>{{ m.intent }}</dd>{% endif %}
+      {% if s.get('summary') %}<dt>Сезонность</dt><dd>{{ s.summary }}{% if s.get('peaks') %}<br><span class="small muted">{% for p_ in s.peaks %}{{ p_.get('event') }}: {{ p_.get('date') }}{{ '; ' if not loop.last }}{% endfor %}</span>{% endif %}</dd>{% endif %}
+      {% for sg in (mrep.get('segments') or [])|selectattr('market', 'equalto', mk) %}<dt>{{ sg.get('name') }}</dt><dd>{{ sg.get('who') }}. {{ sg.get('why') or '' }}{% if sg.get('price_point') %} Цена: {{ sg.price_point }}.{% endif %}{% if sg.get('where_to_find') %} Где найти: {{ sg.where_to_find }}.{% endif %}</dd>{% endfor %}
+      {% set a = m.get('acquisition') or {} %}{% set c = a.get('cac_estimate') or {} %}
+      {% if a.get('channels') or c.get('low') is not none %}<dt>Как привлекать</dt><dd>{{ (a.get('channels') or [])|join(', ') }}{% if c.get('low') is not none %}. Привлечение одного покупателя: {{ money(c.low, '', 0) }}–{{ money(c.high, c.currency, 0) }}, это {{ TYPE_LABEL.get(c.get('type'), 'оценка') }}{% endif %}</dd>{% endif %}
+      {% if m.get('scale_limits') %}<dt>Что ограничит рост</dt><dd>{{ m.scale_limits }}</dd>{% endif %}
+    </dl>
     {% if d.get('signals') %}
-    <details><summary>Сигналы спроса с источниками ({{ d.signals|length }})</summary>
-      <div class="tw"><table><tr><th>Сигнал</th><th>Значение</th><th>Тип</th><th>Источник</th></tr>
-      {% for sg in d.signals %}<tr><td class="small">{{ sg.get('claim') }}</td><td class="nowrap small">{{ sg.get('value') if sg.get('value') is not none else '—' }} {{ sg.get('unit') or '' }}<div class="muted">{{ sg.get('period') or '' }}</div></td><td>{{ M.type_badge(sg.get('type')) }}</td><td class="small">{{ M.src(sg.get('source_url'), sg.get('source_name')) }}</td></tr>{% endfor %}
+    <details style="margin-top:16px"><summary>Сигналы спроса с источниками ({{ d.signals|length }})</summary>
+      <div class="tw" style="margin-top:8px"><table><tr><th>Сигнал</th><th>Значение</th><th>Тип</th><th>Источник</th></tr>
+      {% for sg in d.signals %}<tr><td class="small">{{ sg.get('claim') }}</td><td class="nowrap small">{{ sg.get('value') if sg.get('value') is not none else '—' }} {{ sg.get('unit') or '' }}<div class="faint">{{ sg.get('period') or '' }}</div></td><td>{{ M.type_badge(sg.get('type')) }}</td><td class="small">{{ M.src(sg.get('source_url'), sg.get('source_name')) }}</td></tr>{% endfor %}
       </table></div>
     </details>{% endif %}
   </section>
 
-  <section class="card" id="economics-{{ mk|lower }}">
+  <section class="sec" id="economics-{{ mk|lower }}">
     <h2>Экономика</h2>
     {% if em.get('status') == 'ok' %}{% set cur = em.currency %}{% set b = em.scenarios.base %}
       {% for n in em.get('notes') or [] %}<div class="notice n-bad">{{ n }}</div>{% endfor %}
@@ -235,12 +253,14 @@
     </details>
     {% endif %}
   </section>
+ </div>
 </div>
 {% endfor %}
 
 {# ---------- сравнение ---------- #}
 <div class="panel" id="panel-compare">
-  <section class="card">
+ <div class="surface">
+  <section class="sec">
     <h2>Какой рынок первым</h2>
     <p class="lead"><b>{{ sc.get('market_label') }}</b></p>
     {% if sc.get('market_note') %}<p class="small muted">{{ sc.market_note }}</p>{% endif %}
@@ -250,7 +270,7 @@
     {% if ns.get('action') %}<p><b>Следующий шаг:</b> {{ ns.action }}{% if ns.get('cost') %} · {{ ns.cost }}{% endif %}{% if ns.get('success_criterion') %}<br><span class="small muted">Как понять, что получилось: {{ ns.success_criterion }}</span>{% endif %}</p>{% endif %}
   </section>
 
-  <section class="card">
+  <section class="sec">
     <h2>Оценка {{ '%.1f'|format(sc.score) if sc.get('score') is not none else '—' }}/10 <span class="small muted">— не вероятность успеха</span></h2>
     <div class="tw"><table>
       <tr><th>Часть оценки</th><th>Вес</th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}</th>{% endfor %}</tr>
@@ -263,7 +283,7 @@
     <details style="margin-top:10px"><summary>Как считается оценка</summary><ul class="small">{% for r in rules %}<li>{{ r }}</li>{% endfor %}</ul></details>
   </section>
 
-  <section class="card">
+  <section class="sec">
     <h2>Рынки рядом</h2>
     <div class="tw"><table>
       <tr><th style="width:160px"></th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}{% if mk == chosen %} ★{% endif %}</th>{% endfor %}</tr>
@@ -273,12 +293,12 @@
       <tr><td>Прибыль в месяц</td>{% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}<td>{% if em.get('status') == 'ok' %}{{ money(em.scenarios.base.operating_profit, em.currency, 0) }} · ≈ {{ money(em.scenarios.base.in_base.operating_profit, econ.base_currency, 0) }}{% else %}—{% endif %}</td>{% endfor %}</tr>
       <tr><td>Деньги на старт</td>{% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}<td>{% if em.get('status') == 'ok' %}≈ {{ money(em.scenarios.base.in_base.startup_cash_need, econ.base_currency, 0) }}{% else %}—{% endif %}</td>{% endfor %}</tr>
       {% for key, label in [('payments','Платежи'),('legal','Законный запуск'),('fulfilment','Доставка заказов'),('product_requirements','Требования / права')] %}
-      <tr><td>{{ label }}</td>{% for mk in MARKETS %}{% set g = ((markets.get(mk) or {}).get('launch_feasibility') or {}).get(key) or {} %}<td class="small">{{ FEAS.get(g.get('status','unknown'), g.get('status')) }}</td>{% endfor %}</tr>
+      <tr><td>{{ label }}</td>{% for mk in MARKETS %}{% set g = ((markets.get(mk) or {}).get('launch_feasibility') or {}).get(key) or {} %}<td class="small">{% set f_ = FS.get(g.get('status','unknown'), ('unk','нет данных')) %}<span class="st {{ f_[0] }}">{{ f_[1] }}</span></td>{% endfor %}</tr>
       {% endfor %}
     </table></div>
   </section>
 
-  <section class="card">
+  <section class="sec">
     <h2>Риски и что не подтверждено</h2>
     {% if mrep.get('main_risk') %}<p><b>Главный риск:</b> {{ mrep.main_risk }}</p>{% endif %}
     <div class="grid g2">
@@ -287,16 +307,18 @@
     </div>
     {% if mrep.get('alt_explanations') %}<h3>А может, интерес временный?</h3><ul>{% for a in mrep.alt_explanations %}<li><b>{{ a.get('explanation') }}</b> — {{ a.get('assessment') }}</li>{% endfor %}</ul>{% endif %}
   </section>
+ </div>
 </div>
 
 {# ---------- производство ---------- #}
 <div class="panel" id="panel-production">
-  <section class="card">
+ <div class="surface">
+  <section class="sec">
     <h2>Как производить</h2>
     {% if prod.get('recommended_reason') %}<p class="lead">{{ prod.recommended_reason }}</p>{% endif %}
     {% for o in prod.get('options') or [] %}{% set su = o.get('startup_cost') or {} %}{% set uc = o.get('unit_cost') or {} %}
-      <div class="card" style="margin-bottom:10px;{% if o.get('key') == prod.get('recommended_option') %}border-color:var(--good){% endif %}">
-        <div class="row" style="justify-content:space-between"><b>{{ o.get('name') }}</b>{% if o.get('key') == prod.get('recommended_option') %}<span class="badge b-good">рекомендуем</span>{% endif %}</div>
+      <div style="padding:16px 0;border-top:1px solid var(--line);{% if o.get('key') == prod.get('recommended_option') %}border-color:var(--good){% endif %}">
+        <div class="row" style="justify-content:space-between"><b>{{ o.get('name') }}</b>{% if o.get('key') == prod.get('recommended_option') %}<span class="st go">Рекомендуем</span>{% endif %}</div>
         <p class="small" style="margin:6px 0">{{ o.get('operations') or '' }}{% if o.get('equipment') %} · Оборудование: {{ o.equipment }}{% endif %}</p>
         <div class="tiles">
           <div class="tile"><div class="k">На старт</div><div class="v">{{ money(su.get('value'), su.get('currency') or '', 0) }}</div><div class="s">{{ TYPE_LABEL.get(su.get('type'), '') }}</div></div>
@@ -315,7 +337,7 @@
     </form>
   </section>
   {% if prod.get('contractors') %}
-  <section class="card">
+  <section class="sec">
     <h2>Подрядчики</h2>
     {% for mk in MARKETS %}{% set cs_ = (prod.contractors or [])|selectattr('market', 'equalto', mk)|list %}{% if cs_ %}
       <h3>{{ MARKET_LABEL[mk] }}</h3>
@@ -326,17 +348,19 @@
     {% if prod.get('quote_request_draft') %}<details style="margin-top:12px"><summary>Черновик письма-запроса цены (бот сам не отправляет)</summary><pre>{{ prod.quote_request_draft }}</pre></details>{% endif %}
   </section>
   {% endif %}
+ </div>
 </div>
 
 {# ---------- данные и источники ---------- #}
 <div class="panel" id="panel-data">
-  <section class="card" id="evidence">
+ <div class="surface">
+  <section class="sec" id="evidence">
     <h2>Добавленные данные</h2>
     {% if request.query_params.get('err') %}<div class="notice n-bad">{{ request.query_params.get('err') }}</div>{% endif %}
     {% for e in evidence %}{% set p = e.payload|fromjson %}
-      <div class="small" style="margin-bottom:8px"><span class="badge b-muted">{{ MARKET_LABEL.get(e.market, e.market) }}</span> <b>{{ e.source }}</b>
+      <div class="small" style="margin-bottom:8px"><span class="tag">{{ MARKET_LABEL.get(e.market, e.market) }}</span> <b>{{ e.source }}</b>
         {% if e.kind == 'trends_csv' %} · период {{ e.period }} · получено {{ e.retrieved_at[:10] }}
-          {% for name, st in (p.get('stats') or {}).items() %}<br>«{{ name }}»: последние недели {{ st.last4_avg }}, тренд {{ pct(st.momentum) }}, год к году {{ pct(st.yoy) }}, пик — месяц {{ st.peak_month }}{% if st.low_base %} <span class="badge b-warn">мало запросов</span>{% endif %}{% endfor %}
+          {% for name, st in (p.get('stats') or {}).items() %}<br>«{{ name }}»: последние недели {{ st.last4_avg }}, тренд {{ pct(st.momentum) }}, год к году {{ pct(st.yoy) }}, пик — месяц {{ st.peak_month }}{% if st.low_base %} <span class="tag warn">мало запросов</span>{% endif %}{% endfor %}
         {% elif e.kind == 'comtrade' %} · {% for s_ in p.get('series') or [] %}{{ s_.year }}: {{ money(s_.import_usd, 'USD', 0) if s_.import_usd is not none else '—' }}{{ '; ' if not loop.last }}{% endfor %}
         {% else %} · {{ p.get('note') }} {{ p.get('value') or '' }} {{ p.get('unit') or '' }} {% if e.url %}· {{ M.src(e.url) }}{% endif %}{% endif %}
       </div>
@@ -361,7 +385,7 @@
       </form>
     </div>
   </section>
-  <section class="card">
+  <section class="sec">
     <h2>Источники разбора</h2>
     {% set srcs = (mrep.get('sources') or []) + (prod.get('sources') or []) %}
     {% if srcs %}<div class="tw"><table><tr><th>Источник</th><th>Рынок</th><th>Для чего</th></tr>
@@ -369,13 +393,15 @@
     </table></div>{% else %}<p class="muted">Нет.</p>{% endif %}
     {% set seen = report.get('seen_sources') or [] %}
     {% if seen %}<details style="margin-top:10px"><summary>Все просмотренные страницы ({{ seen|length }})</summary><ul class="small">{% for s_ in seen %}<li>{{ M.src(s_.url, s_.title) }}{% if s_.page_age %} <span class="muted">· {{ s_.page_age }}</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
-    <p class="small muted">Разбор от {{ (report.get('generated_at') or '')[:16]|replace('T',' ') }} UTC, модель {{ report.get('model') or '' }}. {{ M.type_badge('observation') }} видели на странице · {{ M.type_badge('estimate') }} оценка · {{ M.type_badge('assumption') }} допущение.</p>
+    <p class="small muted">Разбор от {{ (report.get('generated_at') or '')[:16]|replace('T',' ') }} UTC, модель {{ report.get('model') or '' }}. {{ M.type_badge('observation') }} видели на странице, {{ M.type_badge('estimate') }} оценка, {{ M.type_badge('assumption') }} допущение.</p>
   </section>
+ </div>
 </div>
 
 {# ---------- история ---------- #}
 <div class="panel" id="panel-history">
-  <section class="card">
+ <div class="surface">
+  <section class="sec">
     <h2>Версии</h2>
     {% for v in versions %}<div class="small" style="margin-bottom:6px"><a href="/ideas/{{ idea.id }}?v={{ v.version }}">v{{ v.version }}</a> · {{ v.created_at[:16]|replace('T',' ') }} UTC — {{ v.change_summary or '' }}{% if v.change_request and v.version > 1 %}<br><span class="muted">Запрос: {{ v.change_request }}</span>{% endif %}</div>{% endfor %}
     {% if qa %}<h3>Вопросы и ответы</h3>{% for q in qa %}<div class="small" style="margin-bottom:10px"><b>{{ q.question }}</b><br>{{ q.answer }}</div>{% endfor %}{% endif %}
@@ -385,11 +411,12 @@
     {% for l in links %}<div class="small">{{ M.src(l.url) }} — {{ 'прочитано' if l.ok else (l.error or 'ещё не загружено') }}</div>{% endfor %}
     <div class="row">{% for m_ in media %}{% set name = m_.path.split('/')[-1] %}<img class="thumb" src="/media/{{ idea.user_id }}/{{ name }}" alt="фото">{% endfor %}</div>
   </section>
+ </div>
 </div>
 {% endif %}
 
 {# ---------- уточнить (всегда видно) ---------- #}
-<section class="card" id="refine">
+<section class="surface" id="refine">
   <h2>Уточнить идею</h2>
   <form method="post" action="/ideas/{{ idea.id }}/refine">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">

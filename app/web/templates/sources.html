@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Источники данных</h1>
+<div class="pagehead"><div><h1>Источники данных</h1></div></div>
 <p class="muted">Статусы честные: «ручной импорт» не работает сам. Бот не обходит авторизацию, CAPTCHA и ограничения сайтов.</p>
-{% set cls = {'автоматически':'b-good','нужен ключ':'b-warn','ручной импорт':'b-muted','недоступно':'b-bad','после запуска магазина':'b-muted'} %}
+{% set cls = {'автоматически':'go','нужен ключ':'wait','ручной импорт':'unk','недоступно':'stop','после запуска магазина':'unk'} %}
 {% for p in passports %}
 <div class="card">
-  <div class="row" style="justify-content:space-between"><h2 style="margin:0">{{ p.name }}</h2><span class="badge {{ cls.get(p.status,'') }}">{{ p.status }}</span></div>
+  <div class="row" style="justify-content:space-between"><h2 style="margin:0">{{ p.name }}</h2><span class="st {{ cls.get(p.status,'unk') }}">{{ p.status|capitalize }}</span></div>
   <p class="small">{{ p.what }}</p>
   <div class="kv small">
     <div>Доступ</div><div>{{ p.access }}</div>

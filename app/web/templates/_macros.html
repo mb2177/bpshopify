@@ -1,39 +1,55 @@
+{% macro tone(score) -%}
+{{ 'go' if score is not none and score >= 7 else ('wait' if score is not none and score >= 5 else ('stop' if score is not none and score < 3.5 else 'unk')) }}
+{%- endmacro %}
+
 {% macro score_badge(score, big=False) -%}
-{%- if score is none -%}<span class="muted">—</span>
-{%- else -%}{% set cls = 's-good' if score >= 7 else ('s-warn' if score >= 5 else 's-bad') %}
-<span class="{{ 'score ' if big }}{{ cls }}">{{ '%.1f'|format(score) }}{% if big %}<small>/10</small>{% endif %}</span>
+{%- if score is none -%}<span class="faint">—</span>
+{%- else -%}<span class="t-{{ tone(score)|trim }}" {% if big %}style="font:600 44px/1 var(--sans);letter-spacing:-.03em"{% endif %}>{{ '%.1f'|format(score) }}</span>{% if big %}<span class="faint" style="font-size:16px"> / 10</span>{% endif %}
 {%- endif -%}
 {%- endmacro %}
 
+{% macro scale(score, mini=False) -%}
+<div class="scale {{ 'mini' if mini }} t-{{ tone(score)|trim }}" style="--v:{{ score if score is not none else 0 }}" role="img" aria-label="Оценка {{ score }} из 10">
+  {% if not mini %}{% for t in [3.5, 5, 7] %}<i class="tick" style="left:{{ t * 10 }}%"><span>{{ t|string|replace('.0','') }}</span></i>{% endfor %}{% endif %}
+  {% if score is not none %}<i class="pin"></i>{% endif %}
+</div>
+{%- endmacro %}
+
 {% macro verdict_badge(v) -%}
-{% set cls = {'тестировать':'b-good','доработать':'b-warn','наблюдать':'b-muted','отклонить':'b-bad','недостаточно данных':'b-muted'} %}
-<span class="badge {{ cls.get(v, '') }}">{{ v or '—' }}</span>
+{% set cls = {'тестировать':'go','доработать':'wait','наблюдать':'unk','отклонить':'stop','недостаточно данных':'unk'} %}
+<span class="st {{ cls.get(v, 'unk') }}">{{ (v or '—')|capitalize }}</span>
 {%- endmacro %}
 
 {% macro type_badge(t) -%}
-{% set cls = {'observation':'b-good','estimate':'b-warn','assumption':'b-muted'} %}
-<span class="badge {{ cls.get(t, 'b-muted') }}">{{ TYPE_LABEL.get(t, t or 'н/д') }}</span>
+<span class="tag">{{ TYPE_LABEL.get(t, t or 'н/д') }}</span>
 {%- endmacro %}
 
 {% macro status_badge(s) -%}
-{% set cls = {'ready':'b-good','partial':'b-warn','failed':'b-bad','cancelled':'b-muted','researching':'','queued':''} %}
-<span class="badge {{ cls.get(s, '') }}">{% if s in ('researching','queued') %}<span class="spinner"></span> {% endif %}{{ STATUS_LABEL.get(s, s) }}</span>
+{% set cls = {'ready':'go','partial':'wait','failed':'stop','cancelled':'unk','researching':'run','queued':'run'} %}
+{% if s in ('researching','queued') %}<span class="st run" style="gap:8px"><span class="spinner"></span>{{ STATUS_LABEL.get(s, s)|capitalize }}</span>
+{% else %}<span class="st {{ cls.get(s, 'unk') }}">{{ STATUS_LABEL.get(s, s)|capitalize }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro gate(g) -%}
+{% set cls = {'ok':'go','fail_hard':'stop','fail_soft':'wait','unknown':'unk'} %}
+<div class="gate">
+  <span class="st {{ cls.get(g.status, 'unk') }}">{{ g.label }}</span>
+  <span class="small muted n">{{ g.note }}</span>
+</div>
 {%- endmacro %}
 
 {% macro src(url, label=None) -%}
 {%- if url and (url.startswith('http://') or url.startswith('https://')) -%}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label or (url.split('/')[2] if url.count('/')>=2 else url) }}</a>
-{%- elif url -%}<span class="muted">{{ url }}</span>{%- else -%}<span class="muted">нет источника</span>{%- endif -%}
+{%- elif url -%}<span class="muted">{{ url }}</span>{%- else -%}<span class="faint">нет источника</span>{%- endif -%}
 {%- endmacro %}
 
 {% macro idea_row(i) -%}
-<div class="idea-row">
-  <div class="sc">{{ score_badge(i.score) }}</div>
-  <div class="t">
-    <a href="/ideas/{{ i.id }}">#{{ i.id }} {{ i.title }}</a>
-    {% if i.is_project %}<span class="badge">⭐ проект</span>{% endif %}
-    {% if i.is_demo %}<span class="badge b-warn">ДЕМО</span>{% endif %}
-    <div class="small muted">{{ MARKET_LABEL.get(i.market, '—') }} · {{ {'telegram':'Telegram','web':'сайт','daily':'идея дня'}.get(i.origin, i.origin) }} · {{ (i.updated_at or '')[:16]|replace('T',' ') }} UTC</div>
+<a class="irow" href="/ideas/{{ i.id }}">
+  <div><div class="num t-{{ tone(i.score)|trim }}">{{ '%.1f'|format(i.score) if i.score is not none else '—' }}</div>{{ scale(i.score, True) }}</div>
+  <div style="min-width:0">
+    <div class="it">{{ i.title }}</div>
+    <div class="im">#{{ i.id }}, {{ MARKET_LABEL.get(i.market, 'рынок не выбран') }}, {{ {'telegram':'из Telegram','web':'с сайта','daily':'идея дня'}.get(i.origin, i.origin) }}, {{ (i.updated_at or '')[:10] }}{% if i.is_project %} <span class="tag ledger">проект</span>{% endif %}{% if i.is_demo %} <span class="tag warn">демо</span>{% endif %}</div>
   </div>
-  <div class="nowrap">{% if i.status in ('ready','partial') %}{{ verdict_badge(i.verdict) }}{% else %}{{ status_badge(i.status) }}{% endif %}</div>
-</div>
+  <div class="ir">{% if i.status in ('ready','partial') %}{{ verdict_badge(i.verdict) }}{% else %}{{ status_badge(i.status) }}{% endif %}</div>
+</a>
 {%- endmacro %}
