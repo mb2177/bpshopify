@@ -167,17 +167,22 @@ async def cmd_help(message: Message):
     await message.answer(
         "Как пользоваться:\n• Пришлите идею текстом, ссылкой, фото или голосом.\n"
         "• Ответьте на сообщение об идее, чтобы уточнить: «а если партия 50 шт?», «найди конкурентов в Дубае», "
-        "«не хотим покупать оборудование».\n\nКоманды:\n/new — следующая реплика станет новой идеей\n"
+        "«не хотим покупать оборудование».\n\nКоманды:\n/new текст — точно запустить как новую идею (обычно можно просто написать идею)\n"
         "/ideas — последние идеи\n/status — что сейчас исследуется\n/cancel — остановить исследование\n"
         "/login — ссылка для входа на сайт без пароля (10 мин)\n/help — эта справка")
 
 
 @dp.message(Command("new"))
-async def cmd_new(message: Message):
+async def cmd_new(message: Message, command: CommandObject):
     uid = await guard(message)
-    if uid:
-        pending_put(f"mode:{uid}", uid, {"mode": "new"})
-        await message.answer("Жду идею: текст, ссылку, фото или голосовое.")
+    if not uid:
+        return
+    text = (command.args or "").strip()
+    if text:  # «/new идея» одним сообщением — запускаем сразу
+        await start_idea(message, uid, text, [], f"tg-idea:{message.chat.id}:{message.message_id}")
+        return
+    pending_put(f"mode:{uid}", uid, {"mode": "new"})
+    await message.answer("Жду идею: текст, ссылку, фото или голосовое.")
 
 
 @dp.message(Command("login"))
