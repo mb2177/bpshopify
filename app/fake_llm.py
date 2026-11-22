@@ -7,6 +7,14 @@ DEMO = "ДЕМО — вымышленные данные"
 
 def _market(mk, cur, price, comp_price, scores):
     return {
+        "pitch": {"one_liner": f"ДЕМО: продаём футболки с именами для девичников ({mk}).",
+                  "product": "Хлопковая футболка, принт с именем и датой, комплект от 5 шт.",
+                  "customer": "Подруги невесты, которые организуют девичник.",
+                  "why_buy": "Быстрее и дешевле, чем у конкурентов, с готовыми макетами.",
+                  "how_it_works": "Заказ на сайте → печать у подрядчика → проверка → доставка за 5–7 дней.",
+                  "money": f"Цена около {price} {cur}, себестоимость ~9 USD, после рекламы остаётся немного.",
+                  "start": "Образцы и фото — около 250 USD.",
+                  "verdict_plain": "ДЕМО: можно проверить малым тестом, но конкуренция высокая."},
         "summary": f"{DEMO}. Сводка рынка {mk}.",
         "demand": {"summary": DEMO, "signals": [
             {"claim": "Рост запросов (демо)", "value": 20, "unit": "%", "period": "12 мес", "market": mk,
@@ -47,7 +55,9 @@ def respond(step: str, content) -> str:
                "buyer": "организаторы мероприятий", "situation": "свадьбы и вечеринки", "region_hint": region,
                "markets_requested": ["USA", "UAE"], "photo_description": None, "ambiguities": [], "critical_question": None}
     elif base in ("market", "market_r"):
-        out = {"title": "ДЕМО: кастомные футболки для свадеб", "product": "футболки с персональным принтом",
+        out = {"title": "ДЕМО: кастомные футболки для свадеб",
+               "idea_plain": "ДЕМО. Владелец предложил кастомные футболки; выбран конкретный товар — футболки с именами для девичников, потому что у них ясный повод покупки и групповой заказ.",
+               "product_note": None, "product": "футболки с персональным принтом",
                "buyer": "пары и друзья невесты/жениха", "situation": "девичник, свадьба",
                "segments": [{"market": "USA", "name": "Девичники", "who": DEMO, "why": DEMO, "price_point": "$25–35",
                              "where_to_find": "Instagram, Pinterest"}],

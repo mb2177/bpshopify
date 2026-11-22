@@ -290,7 +290,7 @@ async def idea_econ(request: Request, idea_id: int):
                     continue
             items[key] = lst
     research.recalc_from_form(u["id"], idea_id, market, changes, items)
-    return go(f"/ideas/{idea_id}#economics")
+    return go(f"/ideas/{idea_id}#{market.lower()}")
 
 
 @app.post("/ideas/{idea_id}/refine")

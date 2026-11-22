@@ -5,19 +5,35 @@
 {% set markets = mrep.get('markets') or {} %}
 {% set chosen = sc.get('market') %}
 {% set per = sc.get('per_market') or {} %}
+{% set VERD = {'test':'тестировать','improve':'доработать','watch':'наблюдать','reject':'отклонить','insufficient':'недостаточно данных'} %}
+{% set default_tab = (chosen|lower) if chosen in MARKETS else 'usa' %}
 
+<style>
+.tabbar{display:flex;gap:6px;overflow-x:auto;margin:0 0 14px;padding:6px 0;position:sticky;top:52px;background:var(--bg);z-index:5}
+.tabbar button{font:inherit;white-space:nowrap;cursor:pointer;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+.tabbar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.tabbar button .sc{opacity:.8;font-size:13px;margin-left:4px}
+.panel{display:none}.panel.on{display:block}
+.pitch p{margin:0 0 14px;font-size:16px;line-height:1.6}.pitch b.l{display:block;font-size:13px;color:var(--muted);font-weight:600;margin-bottom:2px}
+.lead{font-size:17px;line-height:1.6}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.tile{background:var(--bg);border-radius:10px;padding:10px 12px}.tile .k{font-size:12px;color:var(--muted)}.tile .v{font-size:18px;font-weight:700;margin-top:2px}
+.tile .s{font-size:12px;color:var(--muted)}
+</style>
+
+{# ---------- шапка ---------- #}
 <div class="card">
   <div class="row" style="justify-content:space-between;align-items:flex-start">
     <div style="flex:1;min-width:240px">
-      <div class="small muted">Идея #{{ idea.id }} · {{ {'telegram':'из Telegram','web':'с сайта','daily':'идея дня'}.get(idea.origin) }} · создана {{ idea.created_at[:16]|replace('T',' ') }} UTC</div>
+      <div class="small muted">Идея #{{ idea.id }} · {{ {'telegram':'из Telegram','web':'с сайта','daily':'идея дня'}.get(idea.origin) }} · {{ idea.created_at[:16]|replace('T',' ') }} UTC</div>
       <h1 style="margin:4px 0">{{ idea.title }}</h1>
       <div class="row">
         {{ M.status_badge(idea.status) }}
         {% if idea.is_project %}<span class="badge">⭐ проект</span>{% endif %}
         {% if idea.archived %}<span class="badge b-muted">в архиве</span>{% endif %}
         {% if idea.is_demo or report.get('demo') %}<span class="badge b-warn">ДЕМО-данные</span>{% endif %}
-        {% if ver %}<span class="badge b-muted">версия {{ ver.version }}{% if not is_latest %} (не последняя){% endif %}</span>{% endif %}
         {% if report.get('deep') %}<span class="badge">🔬 Opus</span>{% endif %}
+        {% if ver %}<span class="badge b-muted">версия {{ ver.version }}{% if not is_latest %} (старая){% endif %}</span>{% endif %}
       </div>
     </div>
     {% if ver %}
@@ -25,10 +41,19 @@
       {{ M.score_badge(sc.get('score'), True) }}
       <div style="margin-top:6px">{{ M.verdict_badge(sc.get('verdict_label')) }}</div>
       <div class="small" style="margin-top:6px">Первый рынок: <b>{{ sc.get('market_label') }}</b></div>
-      {% if chosen in MARKETS %}<div class="small muted">Качество данных: {{ per[chosen].data_quality }} ({{ per[chosen].observations }} набл.)</div>{% endif %}
     </div>
     {% endif %}
   </div>
+
+  {% if mrep.get('idea_plain') %}
+    <h3>Идея простыми словами</h3>
+    <p class="lead" style="margin:0">{{ mrep.idea_plain }}</p>
+    {% if mrep.get('product_note') %}<p class="small muted">{{ mrep.product_note }}</p>{% endif %}
+  {% elif mrep.get('product') %}
+    <h3>Идея</h3>
+    <p class="lead" style="margin:0">{{ mrep.product }}{% if mrep.get('buyer') %} — для: {{ mrep.buyer }}{% endif %}</p>
+  {% endif %}
+
   {% if idea.status in ('queued','researching') %}
     <div class="notice n-info" style="margin-top:12px"><span class="spinner"></span> {{ idea.stage or 'В очереди' }} — страница обновится сама.
       {% if job %}<form method="post" action="/ideas/{{ idea.id }}/cancel" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm danger">Остановить</button></form>{% endif %}
@@ -36,310 +61,361 @@
   {% elif idea.status == 'failed' %}
     <div class="notice n-bad" style="margin-top:12px">{{ idea.stage or 'Ошибка исследования' }}. <a href="/logs">Журнал</a></div>
   {% endif %}
-  {% if not is_latest %}<div class="notice n-warn" style="margin-top:12px">Вы смотрите старую версию. <a href="/ideas/{{ idea.id }}">Открыть актуальную</a></div>{% endif %}
+  {% if not is_latest %}<div class="notice n-warn" style="margin-top:12px">Это старая версия. <a href="/ideas/{{ idea.id }}">Открыть актуальную</a></div>{% endif %}
+  {% for p in report.get('partial') or [] %}<div class="notice n-warn" style="margin-top:12px">⚠️ {{ p }}</div>{% endfor %}
+
   <div class="row" style="margin-top:12px">
-    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="project"><button class="btn sm">{{ '★ Убрать из проектов' if idea.is_project else '☆ Сохранить в проекты' }}</button></form>
-    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="archive"><button class="btn sm">{{ 'Вернуть из архива' if idea.archived else 'Архивировать' }}</button></form>
-    {% if idea.status not in ('queued','researching') %}<form method="post" action="/ideas/{{ idea.id }}/rerun" onsubmit="return confirm('Полный повторный разбор с поиском на Sonnet (≈ $0.5–1). Продолжить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm">↻ Обновить разбор</button></form>
-    <form method="post" action="/ideas/{{ idea.id }}/deep" onsubmit="return confirm('Глубокий разбор на Opus — примерно вдвое дороже обычного (≈ $1–2). Ваши правки экономики сохранятся. Запустить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm primary">🔬 Глубокий разбор (Opus)</button></form>{% endif %}
+    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="project"><button class="btn sm">{{ '★ Убрать из проектов' if idea.is_project else '☆ В проекты' }}</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="archive"><button class="btn sm">{{ 'Из архива' if idea.archived else 'В архив' }}</button></form>
+    {% if idea.status not in ('queued','researching') %}
+    <form method="post" action="/ideas/{{ idea.id }}/rerun" onsubmit="return confirm('Полный повторный разбор с поиском на Sonnet (≈ $0.5–1). Продолжить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm">↻ Обновить разбор</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/deep" onsubmit="return confirm('Глубокий разбор на Opus — примерно вдвое дороже (≈ $1–2). Ваши правки экономики сохранятся. Запустить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm primary">🔬 Глубокий разбор (Opus)</button></form>
+    {% endif %}
   </div>
 </div>
 
 {% if ver %}
-<nav class="tabs">
-  <a href="#summary">Итог</a><a href="#score">Оценка</a><a href="#compare">США / ОАЭ</a><a href="#competitors">Конкуренты</a>
-  <a href="#demand">Спрос</a><a href="#production">Производство</a><a href="#economics">Экономика</a><a href="#risks">Риски</a>
-  <a href="#evidence">Доказательства</a><a href="#sources">Источники</a><a href="#refine">Уточнить</a><a href="#history">История</a>
-</nav>
+{# ---------- вкладки ---------- #}
+<div class="tabbar" id="tabbar">
+  {% for mk in MARKETS %}<button data-tab="{{ mk|lower }}">{{ MARKET_LABEL[mk] }}{% if mk == chosen %} ★{% endif %}{% if per.get(mk) %}<span class="sc">{{ '%.1f'|format(per[mk].score) }}</span>{% endif %}</button>{% endfor %}
+  <button data-tab="compare">Сравнение</button>
+  <button data-tab="production">Производство</button>
+  <button data-tab="data">Данные и источники</button>
+  <button data-tab="history">История</button>
+</div>
 
-{% for p in report.get('partial') or [] %}<div class="notice n-warn">⚠️ {{ p }}</div>{% endfor %}
+{# ---------- панель рынка ---------- #}
+{% for mk in MARKETS %}
+{% set m = markets.get(mk) or {} %}
+{% set pm = per.get(mk) or {} %}
+{% set em = econ.get('markets', {}).get(mk, {}) %}
+{% set mi = (econ_inputs.get('markets') or {}).get(mk) or {} %}
+{% set pitch = m.get('pitch') or {} %}
+<div class="panel" id="panel-{{ mk|lower }}">
 
-<section id="summary" class="card">
-  <h2>Итог</h2>
-  <div class="kv">
-    <div>Товар</div><div>{{ mrep.get('product') or '—' }}</div>
-    <div>Покупатель</div><div>{{ mrep.get('buyer') or '—' }}</div>
-    <div>Ситуация покупки</div><div>{{ mrep.get('situation') or '—' }}</div>
-    <div>Первый рынок</div><div><b>{{ sc.get('market_label') }}</b>{% if sc.get('market_note') %}<br><span class="small muted">{{ sc.market_note }}</span>{% endif %}</div>
-    <div>Почему</div><div>{{ mrep.get('market_reasoning') or '—' }}</div>
-    <div>Переход на второй рынок</div><div>{{ mrep.get('second_market_conditions') or '—' }}</div>
-    <div>Основной риск</div><div>{{ mrep.get('main_risk') or '—' }}</div>
-    {% set ns = mrep.get('next_step') or {} %}
-    <div>Следующий шаг</div><div>{{ ns.get('action') or '—' }}{% if ns.get('cost') %} · стоимость: {{ ns.cost }}{% endif %}{% if ns.get('success_criterion') %}<br><span class="small muted">Критерий: {{ ns.success_criterion }}</span>{% endif %}</div>
-    {% if chosen in MARKETS and econ.get('markets', {}).get(chosen, {}).get('status') == 'ok' %}
-      {% set em = econ.markets[chosen] %}{% set cur = em.currency %}
-      <div>Экономика ({{ MARKET_LABEL[chosen] }})</div>
-      <div>CM2 на заказ: {{ money(em.scenarios.cons.per_order.CM2, cur) }} … <b>{{ money(em.scenarios.base.per_order.CM2, cur) }}</b> … {{ money(em.scenarios.opt.per_order.CM2, cur) }}
-        <span class="small muted">(конс. … базовый … опт.)</span><br>
-        Прибыль в месяц (базовый): <b>{{ money(em.scenarios.base.operating_profit, cur, 0) }}</b> · стартовые деньги ≈ {{ money(em.scenarios.base.startup_cash_need, cur, 0) }}</div>
-    {% endif %}
-  </div>
-</section>
-
-<section id="score" class="card">
-  <h2>Оценка {{ '%.1f'|format(sc.score) if sc.get('score') is not none else '—' }}/10 <span class="small muted">— это не вероятность успеха</span></h2>
-  <div class="tw"><table>
-    <tr><th>Компонент</th><th>Вес</th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}</th>{% endfor %}</tr>
-    {% for key, label in (sc.get('labels') or {}).items() %}
-    <tr><td>{{ label }}</td><td>{{ (sc.weights[key]*100)|round|int }}%</td>
-      {% for mk in MARKETS %}{% set c = per.get(mk, {}).get('components', {}).get(key, {}) %}
-      <td>{{ M.score_badge(c.get('score')) }}<div class="small muted">{{ c.get('why') or '' }}</div></td>{% endfor %}</tr>
-    {% endfor %}
-    <tr><td><b>Итог по рынку</b></td><td></td>{% for mk in MARKETS %}{% set pm = per.get(mk, {}) %}
-      <td><b>{{ M.score_badge(pm.get('score')) }}</b> {{ M.verdict_badge({'test':'тестировать','improve':'доработать','watch':'наблюдать','reject':'отклонить','insufficient':'недостаточно данных'}.get(pm.get('verdict'))) }}
-      {% if pm.get('caps') %}<div class="small muted">Ограничено: {{ pm.caps|join(', ') }}</div>{% endif %}</td>{% endfor %}</tr>
-  </table></div>
-  <h3>Обязательные условия запуска</h3>
-  <div class="grid g2">
-  {% for mk in MARKETS %}<div><div class="mk">{{ MARKET_LABEL[mk] }}</div>
-    {% for g in per.get(mk, {}).get('gates', []) %}<div class="small" style="margin:4px 0">{{ GATE_ICON.get(g.status) }} <b>{{ g.label }}</b>: {{ g.note }}</div>{% endfor %}
-  </div>{% endfor %}
-  </div>
-  <details style="margin-top:12px"><summary>Правила оценки</summary><ul class="small">{% for r in rules %}<li>{{ r }}</li>{% endfor %}</ul></details>
-</section>
-
-<section id="compare" class="card">
-  <h2>Сравнение: США (USA) / ОАЭ (UAE)</h2>
-  <div class="tw"><table>
-    <tr><th style="width:170px"></th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}{% if mk == chosen %} <span class="badge b-good">рекомендуемый</span>{% endif %}</th>{% endfor %}</tr>
-    <tr><td>Сводка</td>{% for mk in MARKETS %}<td>{{ (markets.get(mk) or {}).get('summary') or 'нет данных' }}</td>{% endfor %}</tr>
-    <tr><td>Спрос</td>{% for mk in MARKETS %}<td>{{ ((markets.get(mk) or {}).get('demand') or {}).get('summary') or 'нет данных' }}</td>{% endfor %}</tr>
-    <tr><td>Намерение купить</td>{% for mk in MARKETS %}<td>{{ (markets.get(mk) or {}).get('intent') or '—' }}</td>{% endfor %}</tr>
-    <tr><td>Язык предложения</td>{% for mk in MARKETS %}<td>{{ (markets.get(mk) or {}).get('language') or '—' }}</td>{% endfor %}</tr>
-    <tr><td>Сезонность</td>{% for mk in MARKETS %}{% set s = (markets.get(mk) or {}).get('seasonality') or {} %}<td>{{ s.get('summary') or '—' }}{% if s.get('next_peak_date') %}<br><span class="small">Ближайший пик: <b>{{ s.next_peak_date }}</b></span>{% endif %}</td>{% endfor %}</tr>
-    <tr><td>Цены аналогов</td>{% for mk in MARKETS %}{% set pr = (markets.get(mk) or {}).get('price_range') or {} %}<td>{% if pr.get('low') is not none %}{{ money(pr.low, pr.currency, 0) }} – {{ money(pr.high, pr.currency, 0) }}{% else %}неизвестно{% endif %}<div class="small muted">{{ pr.get('based_on') or '' }}</div></td>{% endfor %}</tr>
-    <tr><td>Наше предложение</td>{% for mk in MARKETS %}<td>{{ (markets.get(mk) or {}).get('our_offer') or '—' }}</td>{% endfor %}</tr>
-    {% for key, label in [('payments','Платежи'),('legal','Законный запуск'),('fulfilment','Выполнение заказов'),('product_requirements','Требования к товару / права')] %}
-    <tr><td>{{ label }}</td>{% for mk in MARKETS %}{% set g = ((markets.get(mk) or {}).get('launch_feasibility') or {}).get(key) or {} %}<td>{{ FEAS.get(g.get('status','unknown'), g.get('status')) }}<div class="small muted">{{ g.get('note') or '' }}</div></td>{% endfor %}</tr>
-    {% endfor %}
-    <tr><td>Привлечение и CAC</td>{% for mk in MARKETS %}{% set a = (markets.get(mk) or {}).get('acquisition') or {} %}{% set c = a.get('cac_estimate') or {} %}<td>{{ (a.get('channels') or [])|join(', ') or '—' }}<br><span class="small">CAC: {% if c.get('low') is not none %}{{ money(c.low, c.currency, 0) }}–{{ money(c.high, c.currency, 0) }} {{ M.type_badge(c.get('type')) }}{% else %}неизвестно{% endif %}</span><div class="small muted">{{ c.get('basis') or '' }}</div></td>{% endfor %}</tr>
-    <tr><td>Ограничения масштаба</td>{% for mk in MARKETS %}<td>{{ (markets.get(mk) or {}).get('scale_limits') or '—' }}</td>{% endfor %}</tr>
-    <tr><td>Экономика (базовый)</td>{% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}<td>{% if em.get('status') == 'ok' %}{% set b = em.scenarios.base %}CM2 {{ money(b.per_order.CM2, em.currency) }} · маржа после рекламы {{ pct(b.per_order.margin_after_ads) }}<br>Прибыль/мес {{ money(b.operating_profit, em.currency, 0) }} · старт {{ money(b.startup_cash_need, em.currency, 0) }}{% else %}<span class="muted">Не хватает: {{ (em.get('missing_labels') or [])|join(', ') }}</span>{% endif %}</td>{% endfor %}</tr>
-  </table></div>
-</section>
-
-<section id="competitors" class="card">
-  <h2>Конкуренты</h2>
-  {% for mk in MARKETS %}{% set comps = (markets.get(mk) or {}).get('competitors') or [] %}
-    <h3>{{ MARKET_LABEL[mk] }}</h3>
-    {% if comps %}<div class="tw"><table><tr><th>Название</th><th>Площадка / регион</th><th>Цена</th><th>Ассортимент</th><th>Отличие</th></tr>
-    {% for c in comps %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td>{{ c.get('platform') or '' }}<div class="small muted">{{ c.get('region') or '' }}</div></td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('assortment') or '' }}</td><td class="small">{{ c.get('differentiator') or '' }}</td></tr>{% endfor %}
-    </table></div>{% else %}<p class="muted">Не найдено.</p>{% endif %}
-  {% endfor %}
-  {% for cs in report.get('competitor_searches') or [] %}
-    <h3>Поиск по региону: {{ cs.get('region') }} <span class="small muted">({{ MARKET_LABEL.get(cs.get('market'), cs.get('market')) }}, {{ (cs.get('searched_at') or '')[:10] }})</span></h3>
-    <p class="small">{{ cs.get('summary') or '' }}</p>
-    <div class="tw"><table><tr><th>Название</th><th>Площадка / регион</th><th>Цена</th><th>Отличие</th></tr>
-    {% for c in cs.get('competitors') or [] %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td>{{ c.get('platform') or '' }}<div class="small muted">{{ MARKET_LABEL.get(c.get('market'), '') }} · {{ c.get('region') or '' }}</div></td><td>{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or '' }}</td></tr>{% endfor %}
-    </table></div>
-  {% endfor %}
-  <form method="post" action="/ideas/{{ idea.id }}/refine" class="row" style="margin-top:14px">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <input name="text" placeholder="Регион или площадка: Дубай, Amazon.ae, Майами…" style="flex:1;min-width:200px" required id="regionInput">
-    <button class="btn" onclick="var i=document.getElementById('regionInput'); if(i.value && !/^найди/i.test(i.value)) i.value='Найди конкурентов в регионе: '+i.value;">Найти конкурентов</button>
-  </form>
-</section>
-
-<section id="demand" class="card">
-  <h2>Спрос, сезонность, сегменты</h2>
-  {% for mk in MARKETS %}{% set d = (markets.get(mk) or {}).get('demand') or {} %}
-    <h3>{{ MARKET_LABEL[mk] }}</h3>
-    {% if d.get('signals') %}<div class="tw"><table><tr><th>Сигнал</th><th>Значение</th><th>Период</th><th>Тип</th><th>Источник</th></tr>
-      {% for s in d.signals %}<tr><td>{{ s.get('claim') }}</td><td class="nowrap">{{ s.get('value') if s.get('value') is not none else 'неизвестно' }} {{ s.get('unit') or '' }}</td><td class="small">{{ s.get('period') or '' }}</td><td>{{ M.type_badge(s.get('type')) }}</td><td class="small">{{ M.src(s.get('source_url'), s.get('source_name')) }}</td></tr>{% endfor %}
-    </table></div>{% else %}<p class="muted">Сигналов нет.</p>{% endif %}
-    {% set peaks = ((markets.get(mk) or {}).get('seasonality') or {}).get('peaks') or [] %}
-    {% if peaks %}<p class="small">Календарь: {% for p in peaks %}{{ p.get('event') }} — <b>{{ p.get('date') }}</b>{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
-  {% endfor %}
-  {% if mrep.get('alt_explanations') %}<h3>Альтернативные объяснения тренда</h3><ul>{% for a in mrep.alt_explanations %}<li><b>{{ a.get('explanation') }}</b> — {{ a.get('assessment') }}</li>{% endfor %}</ul>{% endif %}
-  {% if mrep.get('segments') %}<h3>Сегменты покупателей</h3><div class="tw"><table><tr><th>Рынок</th><th>Сегмент</th><th>Кто / зачем</th><th>Цена</th><th>Где найти</th></tr>
-    {% for s in mrep.segments %}<tr><td class="nowrap">{{ MARKET_LABEL.get(s.get('market'), s.get('market')) }}</td><td><b>{{ s.get('name') }}</b></td><td class="small">{{ s.get('who') }}<br>{{ s.get('why') }}</td><td class="small">{{ s.get('price_point') }}</td><td class="small">{{ s.get('where_to_find') }}</td></tr>{% endfor %}
-  </table></div>{% endif %}
-  {% set ct = report.get('comtrade') or {} %}
-  {% if ct %}<h3>Импорт категории (UN Comtrade, HS {{ mrep.get('hs_code') }})</h3>
-    {% for mk in MARKETS %}{% set c = ct.get(mk) or {} %}<div class="small"><b>{{ MARKET_LABEL[mk] }}:</b>
-      {% if c.get('series') %}{% for s in c.series %}{{ s.year }}: {{ money(s.import_usd, 'USD', 0) if s.import_usd is not none else 'нет данных' }}{{ '; ' if not loop.last }}{% endfor %}{% else %}{{ c.get('error') or 'нет данных' }}{% endif %}</div>{% endfor %}
-    <p class="small muted">Импорт (для ОАЭ — с реэкспортом) не равен розничным покупкам конкретного товара.</p>
-  {% endif %}
-</section>
-
-<section id="production" class="card">
-  <h2>Производство и подрядчики</h2>
-  {% if prod.get('options') %}
-  <div class="tw"><table><tr><th>Вариант</th><th>Старт</th><th>Единица</th><th>Партия</th><th>Срок</th><th>Труд/шт</th><th>Качество / мощность</th><th>Риски / хранение / масштаб</th></tr>
-  {% for o in prod.options %}{% set su = o.get('startup_cost') or {} %}{% set uc = o.get('unit_cost') or {} %}
-    <tr {% if o.get('key') == prod.get('recommended_option') %}style="background:var(--good-soft)"{% endif %}>
-      <td><b>{{ o.get('name') }}</b><div class="small muted">{{ o.get('operations') or '' }}{% if o.get('equipment') %}<br>Оборудование: {{ o.equipment }}{% endif %}</div></td>
-      <td class="nowrap">{{ money(su.get('value'), su.get('currency') or '', 0) }} {{ M.type_badge(su.get('type')) }}</td>
-      <td class="nowrap">{{ money(uc.get('value'), uc.get('currency') or '') }} {{ M.type_badge(uc.get('type')) }}{% if uc.get('source_url') %}<br><span class="small">{{ M.src(uc.source_url) }}</span>{% endif %}</td>
-      <td class="small">{{ o.get('moq') or '—' }}</td><td class="nowrap">{{ o.get('lead_time_days') or '—' }} дн.</td><td>{{ o.get('labor_minutes_per_unit') or '—' }} мин</td>
-      <td class="small">{{ o.get('quality') or '' }}<br>{{ o.get('capacity') or '' }}</td><td class="small">{{ o.get('risks') or '' }}<br>{{ o.get('storage') or '' }} · {{ o.get('scalability') or '' }}</td></tr>
-  {% endfor %}</table></div>
-  <p class="small"><b>Рекомендуемый вариант:</b> {{ prod.get('recommended_reason') or prod.get('recommended_option') }}</p>
-  {% set eb = prod.get('equipment_breakeven') or {} %}{% if eb %}<p class="small"><b>Когда своё оборудование выгоднее:</b> {{ eb.get('units_per_month') or '—' }} шт/мес. {{ eb.get('explanation') or '' }} · Хватит часов: {{ eb.get('fits_owner_hours') or 'неизвестно' }}</p>{% endif %}
-  {% else %}<p class="muted">Производство ещё не исследовано.</p>{% endif %}
-  {% if prod.get('contractors') %}<h3>Подрядчики</h3>
-  <div class="tw"><table><tr><th>Подрядчик</th><th>Рынок / расположение</th><th>Услуги, малые партии</th><th>Образцы / срок / доставка</th><th>Цена</th><th>Контакт</th></tr>
-  {% for c in prod.contractors %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small">{{ MARKET_LABEL.get(c.get('market'), c.get('market')) }}<br>{{ c.get('location') or '' }}</td>
-    <td class="small">{{ c.get('services') or '' }}<br>{{ c.get('small_batch_terms') or '' }}</td><td class="small">{{ c.get('samples') or '' }}<br>{{ c.get('lead_time') or '' }}<br>{{ c.get('shipping') or '' }}</td>
-    <td class="small">{{ c.get('price') or 'нужен запрос' }}<div class="muted">{{ c.get('landed_cost_note') or '' }}</div></td><td class="small">{{ c.get('contact') or '—' }}</td></tr>{% endfor %}
-  </table></div>{% endif %}
-  {% if prod.get('quote_request_draft') %}<details style="margin-top:12px"><summary>Черновик запроса стоимости (бот сам не отправляет)</summary><pre>{{ prod.quote_request_draft }}</pre></details>{% endif %}
-  <form method="post" action="/ideas/{{ idea.id }}/refine" class="row" style="margin-top:14px">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <input name="text" placeholder="Например: не хотим покупать оборудование / найди подрядчиков в ОАЭ" style="flex:1;min-width:200px" required>
-    <button class="btn">Пересмотреть производство</button>
-  </form>
-</section>
-
-<section id="economics" class="card">
-  <h2>Экономика</h2>
-  <p class="small muted">Расчёт кодом по формулам: R — выручка без VAT/sales tax; V — переменные расходы без рекламы; CM1 = R − V; CM2 = CM1 − CAC.
-    Курс: {{ (econ.get('fx') or {}).get('source', '') }}. Правка параметров пересчитывает всё без повторного поиска.</p>
-  {% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}{% set mi = (econ_inputs.get('markets') or {}).get(mk) or {} %}
-  <h3>{{ MARKET_LABEL[mk] }}{% if mk == chosen %} <span class="badge b-good">рекомендуемый</span>{% endif %}</h3>
-  {% if em.get('status') == 'ok' %}{% set cur = em.currency %}
-    {% for n in em.get('notes') or [] %}<div class="notice n-bad">{{ n }}</div>{% endfor %}
-    <div class="tw"><table>
-      <tr><th>На заказ, {{ cur }}</th>{% for s in ['cons','base','opt'] %}<th>{{ SCENARIO_LABEL[s] }}</th>{% endfor %}</tr>
-      {% for key, label in [('R','Выручка R (без VAT)'),('goods_cost','Себестоимость товара (с браком)'),('labor','Наш труд'),('packaging','Упаковка'),('outbound','Отправка'),('payment','Платёжные комиссии'),('fx_fee','Конвертация'),('returns','Ожидаемые потери от возвратов'),('V','Переменные расходы V'),('CM1','CM1 = R − V'),('CAC','CAC'),('CM2','CM2 = CM1 − CAC')] %}
-      <tr {% if key in ('CM1','CM2') %}style="font-weight:700"{% endif %}><td>{{ label }}</td>{% for s in ['cons','base','opt'] %}{% set v = em.scenarios[s].per_order[key] %}<td class="nowrap {{ 's-bad' if key in ('CM1','CM2') and v <= 0 }}">{{ money(v) }}</td>{% endfor %}</tr>
-      {% endfor %}
-      <tr><td>Маржинальность после рекламы (CM2/R)</td>{% for s in ['cons','base','opt'] %}<td>{{ pct(em.scenarios[s].per_order.margin_after_ads) }}</td>{% endfor %}</tr>
-      <tr><td>Валовая маржа (R − себест.)/R</td>{% for s in ['cons','base','opt'] %}<td>{{ pct(em.scenarios[s].per_order.gross_margin) }}</td>{% endfor %}</tr>
-      <tr><td>Наценка (R − себест.)/себест.</td>{% for s in ['cons','base','opt'] %}<td>{{ pct(em.scenarios[s].per_order.markup) }}</td>{% endfor %}</tr>
-      <tr><td>Безубыточный CAC (= CM1)</td>{% for s in ['cons','base','opt'] %}<td>{{ money(em.scenarios[s].per_order.breakeven_cac) if em.scenarios[s].per_order.breakeven_cac is not none else '—' }}</td>{% endfor %}</tr>
-      <tr><td>Безубыточный ROAS</td>{% for s in ['cons','base','opt'] %}<td>{{ '%.2f'|format(em.scenarios[s].per_order.breakeven_roas) if em.scenarios[s].per_order.breakeven_roas else '—' }}</td>{% endfor %}</tr>
-      <tr><th>В месяц</th><th></th><th></th><th></th></tr>
-      <tr><td>Заказов</td>{% for s in ['cons','base','opt'] %}<td>{{ em.scenarios[s].orders|int }}</td>{% endfor %}</tr>
-      <tr><td>Постоянные расходы</td>{% for s in ['cons','base','opt'] %}<td>{{ money(em.scenarios[s].fixed_monthly, cur, 0) }}</td>{% endfor %}</tr>
-      <tr style="font-weight:700"><td>Операционная прибыль (до налогов на прибыль)</td>{% for s in ['cons','base','opt'] %}{% set v = em.scenarios[s].operating_profit %}<td class="{{ 's-bad' if v <= 0 else 's-good' }}">{{ money(v, cur, 0) }}</td>{% endfor %}</tr>
-      <tr><td>Точка безубыточности, заказов/мес</td>{% for s in ['cons','base','opt'] %}<td>{{ em.scenarios[s].breakeven_orders if em.scenarios[s].breakeven_orders is not none else 'недостижима' }}</td>{% endfor %}</tr>
-      <tr><td>Целевой допустимый CAC</td>{% for s in ['cons','base','opt'] %}<td>{{ money(em.scenarios[s].target_cac) if em.scenarios[s].target_cac is not none else '—' }}</td>{% endfor %}</tr>
-      <tr><td>Часы на заказы в месяц</td>{% for s in ['cons','base','opt'] %}<td>{{ '%.0f'|format(em.scenarios[s].hours_per_month) }}</td>{% endfor %}</tr>
-      <tr><td>Стартовые деньги (пик потребности)</td>{% for s in ['cons','base','opt'] %}<td>{{ money(em.scenarios[s].startup_cash_need, cur, 0) }}<div class="small muted">≈ {{ money(em.scenarios[s].in_base.startup_cash_need, econ.base_currency, 0) }}</div></td>{% endfor %}</tr>
-      <tr><td>Окупаемость стартовых денег</td>{% for s in ['cons','base','opt'] %}<td>{{ '%.1f мес'|format(em.scenarios[s].payback_months) if em.scenarios[s].payback_months else 'не окупается' }}</td>{% endfor %}</tr>
-      <tr><td>Непроданный остаток через 90 дней</td>{% for s in ['cons','base','opt'] %}{% set cf = em.scenarios[s].cashflow %}<td>{{ cf.unsold_units }} шт · {{ money(cf.unsold_value, cur, 0) }}</td>{% endfor %}</tr>
-    </table></div>
-    <details><summary>Денежный поток на 90 дней (базовый)</summary>
-      <div class="tw"><table><tr><th>Месяц</th><th>Продаж</th><th>Закупка</th><th>Поступления</th><th>Выплаты</th><th>Накопленно</th><th>Остаток, шт</th></tr>
-      {% for r in em.scenarios.base.cashflow.months %}<tr><td>{{ r.month }}</td><td>{{ r.sales }}</td><td>{{ money(r.purchase, cur, 0) }}</td><td>{{ money(r.cash_in, cur, 0) }}</td><td>{{ money(r.cash_out, cur, 0) }}</td><td class="{{ 's-bad' if r.cumulative < 0 }}">{{ money(r.cumulative, cur, 0) }}</td><td>{{ r.inventory_left }}</td></tr>{% endfor %}
-      </table></div>
-      <p class="small muted">Партия оплачивается сразу; продажи с {{ em.scenarios.base.lead_days|int }}-го дня; разовые расходы — в начале. VAT, собранный с покупателей ОАЭ, в выручку не входит и перечисляется отдельно.</p>
-    </details>
-  {% else %}
-    <div class="notice n-warn">Экономика не посчитана — неизвестны: {{ (em.get('missing_labels') or [])|join(', ') }}. Заполните ниже (неизвестное ≠ 0).</div>
-  {% endif %}
-
-  {% if mi and is_latest %}
-  <details {% if em.get('status') != 'ok' %}open{% endif %}><summary>Изменить параметры — {{ MARKET_LABEL[mk] }} (валюта {{ mi.get('currency') }})</summary>
-    <form method="post" action="/ideas/{{ idea.id }}/econ">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="market" value="{{ mk }}">
-      <div class="grid g3">
-      {% for key, label in FIELD_LABELS.items() %}{% set meta = (mi.get('_meta') or {}).get(key) or {} %}
-        <div><label>{{ label }}{% if key in PCT_FIELDS %}{% endif %} {% if meta %}{{ M.type_badge(meta.get('type')) }}{% endif %}</label>
-        {% if key == 'price_includes_vat' %}<label style="color:var(--text)"><input type="checkbox" name="price_includes_vat" value="1" style="width:auto" {{ 'checked' if mi.get(key) }}> да</label>
-        {% elif key == 'unit_cost_currency' %}<select name="unit_cost_currency">{% for c in ['USD','AED'] %}<option {{ 'selected' if mi.get(key)==c }}>{{ c }}</option>{% endfor %}</select>
-        {% else %}<input name="{{ key }}" value="{{ mi.get(key) if mi.get(key) is not none else '' }}" inputmode="decimal" placeholder="неизвестно">{% endif %}
-        {% if meta.get('source') %}<div class="small muted" style="word-break:break-word">{{ M.src(meta.source) if meta.source.startswith('http') else meta.source }}</div>{% endif %}
-        </div>
-      {% endfor %}
-      </div>
-      {% for key, title in [('fixed_monthly','Постоянные расходы в месяц'),('one_time','Разовые расходы запуска')] %}
-        <h3>{{ title }}</h3>
-        {% for it in (mi.get(key) or []) + [{'name':'','amount':'','currency':mi.get('currency')}] %}
-        <div class="row" style="margin-bottom:6px"><input name="{{ key }}_name" value="{{ it.name }}" placeholder="Статья" style="flex:2;min-width:140px">
-          <input name="{{ key }}_amount" value="{{ it.amount }}" placeholder="Сумма" style="flex:1;min-width:80px" inputmode="decimal">
-          <select name="{{ key }}_currency" style="width:90px">{% for c in ['USD','AED'] %}<option {{ 'selected' if it.currency==c }}>{{ c }}</option>{% endfor %}</select></div>
-        {% endfor %}
-      {% endfor %}
-      <button class="btn primary" style="margin-top:10px">Пересчитать</button>
-    </form>
-  </details>
-  {% endif %}
-  {% endfor %}
-</section>
-
-<section id="risks" class="card">
-  <h2>Риски и пробелы в данных</h2>
-  <div class="grid g2">
-    <div><h3>Почему может не сработать</h3><ul>{% for r in mrep.get('risks') or [] %}<li>{{ r }}</li>{% else %}<li class="muted">—</li>{% endfor %}</ul></div>
-    <div><h3>Что не подтверждено</h3><ul>{% for g in mrep.get('data_gaps') or [] %}<li>{{ g }}</li>{% else %}<li class="muted">—</li>{% endfor %}</ul></div>
-  </div>
-</section>
-{% endif %}
-
-<section id="evidence" class="card">
-  <h2>Доказательства (ручной импорт)</h2>
-  {% if request.query_params.get('err') %}<div class="notice n-bad">{{ request.query_params.get('err') }}</div>{% endif %}
-  {% for e in evidence %}{% set p = e.payload|fromjson %}
-    <div class="small" style="margin-bottom:8px"><span class="badge b-muted">{{ MARKET_LABEL.get(e.market, e.market) }}</span> <b>{{ e.source }}</b>
-      {% if e.kind == 'trends_csv' %} · период {{ e.period }} · получено {{ e.retrieved_at[:10] }}
-        {% for name, st in (p.get('stats') or {}).items() %}<br>«{{ name }}»: последние 4 точки {{ st.last4_avg }}, тренд к пред. 12: {{ pct(st.momentum) }}, г/г: {{ pct(st.yoy) }}, пиковый месяц: {{ st.peak_month }}{% if st.low_base %} <span class="badge b-warn">низкая база</span>{% endif %}{% endfor %}
-      {% elif e.kind == 'comtrade' %} · {{ e.retrieved_at[:10] }}
-      {% else %} · {{ p.get('note') }} {{ p.get('value') or '' }} {{ p.get('unit') or '' }} {% if e.period %}· период {{ e.period }}{% endif %} {% if e.url %}· {{ M.src(e.url) }}{% endif %} · добавлено {{ e.retrieved_at[:10] }}{% endif %}
+  <section class="card pitch">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">{{ MARKET_LABEL[mk] }}: суть</h2>
+      <div>{{ M.score_badge(pm.get('score')) }} {{ M.verdict_badge(VERD.get(pm.get('verdict'))) }}</div>
     </div>
-  {% else %}<p class="muted small">Пока нет. Google Trends, Keyword Planner, Meta Ad Library и TikTok Creative Center подключаются ручным импортом — см. <a href="/sources">Источники</a>.</p>{% endfor %}
-  <div class="grid g2" style="margin-top:12px">
-    <form method="post" action="/ideas/{{ idea.id }}/trends" enctype="multipart/form-data">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <h3>Google Trends CSV</h3>
-      <label>Рынок выгрузки</label><select name="market">{% for mk in MARKETS %}<option value="{{ mk }}">{{ MARKET_LABEL[mk] }}</option>{% endfor %}</select>
-      <label>Файл multiTimeline.csv</label><input type="file" name="file" accept=".csv,text/csv" required>
-      <button class="btn" style="margin-top:10px">Загрузить</button>
-    </form>
-    <form method="post" action="/ideas/{{ idea.id }}/evidence">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <h3>Ручное наблюдение</h3>
-      <div class="row"><select name="source" style="flex:1">{% for s in ['Google Ads Keyword Planner','Meta Ad Library','TikTok Creative Center','Amazon.com','Amazon.ae','Noon','Etsy','Котировка подрядчика','UAE.Stat','Другое'] %}<option>{{ s }}</option>{% endfor %}</select>
-        <select name="market" style="flex:1">{% for mk in MARKETS %}<option value="{{ mk }}">{{ MARKET_LABEL[mk] }}</option>{% endfor %}</select></div>
-      <label>Что увидели</label><input name="note" required placeholder="Например: 1–10 тыс. запросов/мес по 'custom wedding shirts'">
-      <div class="row"><input name="value" placeholder="Значение" style="flex:1"><input name="unit" placeholder="Единица" style="flex:1"><input name="period" placeholder="Период" style="flex:1"></div>
-      <label>Ссылка</label><input name="url" placeholder="https://">
-      <button class="btn" style="margin-top:10px">Добавить</button>
-    </form>
-  </div>
-  {% if evidence and ver %}<p class="small muted">Чтобы учесть новые доказательства в выводах — «↻ Обновить разбор» вверху или уточнение «учти новые данные».</p>{% endif %}
-</section>
+    {% if pitch %}
+      {% if pitch.get('one_liner') %}<p class="lead" style="margin-top:12px"><b>{{ pitch.one_liner }}</b></p>{% endif %}
+      {% for key, label in [('product','Что продаём'),('customer','Кому'),('why_buy','Почему купят у нас'),('how_it_works','Как это работает'),('money','Деньги'),('start','Что нужно для старта'),('verdict_plain','Вывод')] %}
+        {% if pitch.get(key) %}<p><b class="l">{{ label }}</b>{{ pitch[key] }}</p>{% endif %}
+      {% endfor %}
+    {% else %}
+      <p style="margin-top:12px">{{ m.get('summary') or 'Нет данных по этому рынку.' }}</p>
+      {% if m.get('our_offer') %}<p><b class="l">Наше предложение</b>{{ m.our_offer }}</p>{% endif %}
+      <p class="small muted">Этот разбор сделан до появления раздела «простыми словами». Нажмите «↻ Обновить разбор», чтобы получить понятное объяснение.</p>
+    {% endif %}
+  </section>
 
-{% if ver %}
-<section id="sources" class="card">
-  <h2>Источники</h2>
-  {% set srcs = (mrep.get('sources') or []) + (prod.get('sources') or []) %}
-  {% if srcs %}<div class="tw"><table><tr><th>Источник</th><th>Рынок</th><th>Для чего</th></tr>
-    {% for s in srcs %}<tr><td>{{ M.src(s.get('url'), s.get('title')) }}</td><td class="nowrap">{{ MARKET_LABEL.get(s.get('market'), 'оба' if s.get('market')=='both' else s.get('market')) }}</td><td class="small">{{ s.get('used_for') or '' }}</td></tr>{% endfor %}
-  </table></div>{% endif %}
-  {% set seen = report.get('seen_sources') or [] %}
-  {% if seen %}<details style="margin-top:10px"><summary>Все просмотренные страницы поиска ({{ seen|length }})</summary><ul class="small">{% for s in seen %}<li>{{ M.src(s.url, s.title) }}{% if s.page_age %} <span class="muted">· {{ s.page_age }}</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
-  <p class="small muted">Разбор сформирован {{ (report.get('generated_at') or '')[:16]|replace('T',' ') }} UTC. Типы данных: {{ M.type_badge('observation') }} {{ M.type_badge('estimate') }} {{ M.type_badge('assumption') }}. Просмотры, отзывы и поисковый интерес — сигналы, не доказанные продажи.</p>
-</section>
+  <section class="card">
+    <h2>Ключевые цифры</h2>
+    <div class="tiles">
+      {% set pr = m.get('price_range') or {} %}
+      <div class="tile"><div class="k">Цены у конкурентов</div><div class="v">{% if pr.get('low') is not none %}{{ money(pr.low, '', 0) }}–{{ money(pr.high, pr.currency, 0) }}{% else %}неизвестно{% endif %}</div></div>
+      {% if em.get('status') == 'ok' %}{% set b = em.scenarios.base %}{% set cur = em.currency %}
+        <div class="tile"><div class="k">Остаётся с заказа после рекламы</div><div class="v {{ 's-bad' if b.per_order.CM2 <= 0 }}">{{ money(b.per_order.CM2, cur) }}</div><div class="s">базовый сценарий</div></div>
+        <div class="tile"><div class="k">Прибыль в месяц</div><div class="v {{ 's-bad' if b.operating_profit <= 0 else 's-good' }}">{{ money(b.operating_profit, cur, 0) }}</div><div class="s">при {{ b.orders|int }} заказах</div></div>
+        <div class="tile"><div class="k">Деньги на старт</div><div class="v">{{ money(b.startup_cash_need, cur, 0) }}</div><div class="s">≈ {{ money(b.in_base.startup_cash_need, econ.base_currency, 0) }}</div></div>
+      {% else %}
+        <div class="tile"><div class="k">Экономика</div><div class="v">не посчитана</div><div class="s">не хватает: {{ (em.get('missing_labels') or [])|join(', ') }}</div></div>
+      {% endif %}
+      {% set s = m.get('seasonality') or {} %}
+      <div class="tile"><div class="k">Ближайший пик спроса</div><div class="v">{{ s.get('next_peak_date') or '—' }}</div><div class="s">{{ 'сезонный товар' if s.get('is_seasonal') else 'не сезонный' }}</div></div>
+      <div class="tile"><div class="k">Качество данных</div><div class="v">{{ pm.get('data_quality', '—') }}</div><div class="s">{{ pm.get('observations', 0) }} наблюдений с источником</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Можно ли запустить</h2>
+    {% for g in pm.get('gates', []) %}<div style="margin:6px 0">{{ GATE_ICON.get(g.status) }} <b>{{ g.label }}</b> — {{ g.note }}</div>{% endfor %}
+  </section>
+
+  <section class="card">
+    <h2>Конкуренты</h2>
+    {% set comps = m.get('competitors') or [] %}
+    {% if comps %}<div class="tw"><table><tr><th>Кто</th><th>Где</th><th>Цена</th><th>Чем отличается</th></tr>
+      {% for c in comps %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small">{{ c.get('platform') or '' }}<div class="muted">{{ c.get('region') or '' }}</div></td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or c.get('assortment') or '' }}</td></tr>{% endfor %}
+    </table></div>{% else %}<p class="muted">Конкуренты не найдены.</p>{% endif %}
+    {% for cs in report.get('competitor_searches') or [] %}{% if cs.get('market') == mk %}
+      <h3>Поиск: {{ cs.get('region') }} <span class="small muted">{{ (cs.get('searched_at') or '')[:10] }}</span></h3>
+      {% if cs.get('summary') %}<p class="small">{{ cs.summary }}</p>{% endif %}
+      <div class="tw"><table><tr><th>Кто</th><th>Где</th><th>Цена</th><th>Чем отличается</th></tr>
+      {% for c in cs.get('competitors') or [] %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small">{{ c.get('platform') or '' }}<div class="muted">{{ c.get('region') or '' }}</div></td><td class="nowrap">{{ money(c.get('price'), c.get('currency') or '') if c.get('price') is not none else 'не видна' }}</td><td class="small">{{ c.get('differentiator') or '' }}</td></tr>{% endfor %}
+      </table></div>
+    {% endif %}{% endfor %}
+    <form method="post" action="/ideas/{{ idea.id }}/refine" class="row" style="margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input name="text" placeholder="{{ 'Дубай, Абу-Даби, Amazon.ae…' if mk == 'UAE' else 'Нью-Йорк, Майами, Etsy…' }}" style="flex:1;min-width:180px" required class="region-input" data-market="{{ MARKET_LABEL[mk] }}">
+      <button class="btn">Найти конкурентов здесь</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Спрос и покупатели</h2>
+    {% set d = m.get('demand') or {} %}
+    {% if d.get('summary') %}<p>{{ d.summary }}</p>{% endif %}
+    {% if m.get('intent') %}<p><b class="l">Готовность купить</b>{{ m.intent }}</p>{% endif %}
+    {% if s.get('summary') %}<p><b class="l">Сезонность</b>{{ s.summary }}</p>{% endif %}
+    {% if s.get('peaks') %}<p class="small">{% for p in s.peaks %}{{ p.get('event') }} — <b>{{ p.get('date') }}</b>{{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
+    {% set segs = (mrep.get('segments') or [])|selectattr('market', 'equalto', mk)|list %}
+    {% if segs %}<h3>Кто покупает</h3>{% for sg in segs %}<p class="small"><b>{{ sg.get('name') }}</b> — {{ sg.get('who') }}. {{ sg.get('why') or '' }} {% if sg.get('price_point') %}Цена: {{ sg.price_point }}.{% endif %} {% if sg.get('where_to_find') %}Где найти: {{ sg.where_to_find }}.{% endif %}</p>{% endfor %}{% endif %}
+    {% set a = m.get('acquisition') or {} %}{% set c = a.get('cac_estimate') or {} %}
+    {% if a.get('channels') or c.get('low') is not none %}<p><b class="l">Как привлекать покупателей</b>{{ (a.get('channels') or [])|join(', ') }}{% if c.get('low') is not none %}. Стоимость привлечения одного покупателя: {{ money(c.low, '', 0) }}–{{ money(c.high, c.currency, 0) }} ({{ TYPE_LABEL.get(c.get('type'), 'оценка') }}){% endif %}</p>{% endif %}
+    {% if m.get('scale_limits') %}<p><b class="l">Что ограничит рост</b>{{ m.scale_limits }}</p>{% endif %}
+    {% if d.get('signals') %}
+    <details><summary>Сигналы спроса с источниками ({{ d.signals|length }})</summary>
+      <div class="tw"><table><tr><th>Сигнал</th><th>Значение</th><th>Тип</th><th>Источник</th></tr>
+      {% for sg in d.signals %}<tr><td class="small">{{ sg.get('claim') }}</td><td class="nowrap small">{{ sg.get('value') if sg.get('value') is not none else '—' }} {{ sg.get('unit') or '' }}<div class="muted">{{ sg.get('period') or '' }}</div></td><td>{{ M.type_badge(sg.get('type')) }}</td><td class="small">{{ M.src(sg.get('source_url'), sg.get('source_name')) }}</td></tr>{% endfor %}
+      </table></div>
+    </details>{% endif %}
+  </section>
+
+  <section class="card" id="economics-{{ mk|lower }}">
+    <h2>Экономика</h2>
+    {% if em.get('status') == 'ok' %}{% set cur = em.currency %}{% set b = em.scenarios.base %}
+      {% for n in em.get('notes') or [] %}<div class="notice n-bad">{{ n }}</div>{% endfor %}
+      <p>С одного заказа: покупатель платит <b>{{ money(b.per_order.R, cur) }}</b> (без VAT) → расходы на товар, упаковку, доставку и комиссии <b>{{ money(b.per_order.V, cur) }}</b> → реклама <b>{{ money(b.per_order.CAC, cur) }}</b> → остаётся <b class="{{ 's-bad' if b.per_order.CM2 <= 0 else 's-good' }}">{{ money(b.per_order.CM2, cur) }}</b>.</p>
+      <p class="small muted">Это базовый сценарий. Осторожный: {{ money(em.scenarios.cons.per_order.CM2, cur) }} с заказа, оптимистичный: {{ money(em.scenarios.opt.per_order.CM2, cur) }}.</p>
+      <details><summary>Подробный расчёт по сценариям</summary>
+      <div class="tw"><table>
+        <tr><th>На заказ, {{ cur }}</th>{% for sc_ in ['cons','base','opt'] %}<th>{{ SCENARIO_LABEL[sc_] }}</th>{% endfor %}</tr>
+        {% for key, label in [('R','Выручка без VAT'),('goods_cost','Товар (с учётом брака)'),('labor','Наш труд'),('packaging','Упаковка'),('outbound','Доставка'),('payment','Комиссии платежей'),('fx_fee','Конвертация'),('returns','Потери на возвратах'),('V','Все расходы без рекламы'),('CM1','Остаётся до рекламы (CM1)'),('CAC','Реклама на заказ (CAC)'),('CM2','Остаётся после рекламы (CM2)')] %}
+        <tr {% if key in ('CM1','CM2') %}style="font-weight:700"{% endif %}><td>{{ label }}</td>{% for sc_ in ['cons','base','opt'] %}{% set v = em.scenarios[sc_].per_order[key] %}<td class="nowrap {{ 's-bad' if key in ('CM1','CM2') and v <= 0 }}">{{ money(v) }}</td>{% endfor %}</tr>
+        {% endfor %}
+        <tr><td>Маржа после рекламы</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ pct(em.scenarios[sc_].per_order.margin_after_ads) }}</td>{% endfor %}</tr>
+        <tr><td>Валовая маржа / наценка</td>{% for sc_ in ['cons','base','opt'] %}<td class="small">{{ pct(em.scenarios[sc_].per_order.gross_margin) }} / {{ pct(em.scenarios[sc_].per_order.markup) }}</td>{% endfor %}</tr>
+        <tr><td>Максимум на рекламу за заказ (без убытка)</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ money(em.scenarios[sc_].per_order.breakeven_cac) if em.scenarios[sc_].per_order.breakeven_cac is not none else '—' }}</td>{% endfor %}</tr>
+        <tr><th>В месяц</th><th></th><th></th><th></th></tr>
+        <tr><td>Заказов</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ em.scenarios[sc_].orders|int }}</td>{% endfor %}</tr>
+        <tr><td>Постоянные расходы</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ money(em.scenarios[sc_].fixed_monthly, cur, 0) }}</td>{% endfor %}</tr>
+        <tr style="font-weight:700"><td>Прибыль до налогов</td>{% for sc_ in ['cons','base','opt'] %}{% set v = em.scenarios[sc_].operating_profit %}<td class="{{ 's-bad' if v <= 0 else 's-good' }}">{{ money(v, cur, 0) }}</td>{% endfor %}</tr>
+        <tr><td>Нужно заказов для нуля</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ em.scenarios[sc_].breakeven_orders if em.scenarios[sc_].breakeven_orders is not none else 'недостижимо' }}</td>{% endfor %}</tr>
+        <tr><td>Часов работы в месяц</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ '%.0f'|format(em.scenarios[sc_].hours_per_month) }}</td>{% endfor %}</tr>
+        <tr><td>Деньги на старт</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ money(em.scenarios[sc_].startup_cash_need, cur, 0) }}</td>{% endfor %}</tr>
+        <tr><td>Окупаемость</td>{% for sc_ in ['cons','base','opt'] %}<td>{{ '%.1f мес'|format(em.scenarios[sc_].payback_months) if em.scenarios[sc_].payback_months else 'не окупается' }}</td>{% endfor %}</tr>
+        <tr><td>Останется непроданным через 90 дней</td>{% for sc_ in ['cons','base','opt'] %}{% set cf = em.scenarios[sc_].cashflow %}<td>{{ cf.unsold_units }} шт</td>{% endfor %}</tr>
+      </table></div>
+      <h3>Деньги по месяцам (базовый)</h3>
+      <div class="tw"><table><tr><th>Месяц</th><th>Продаж</th><th>Закупка</th><th>Пришло</th><th>Ушло</th><th>Итого на счёте</th></tr>
+      {% for r in b.cashflow.months %}<tr><td>{{ r.month }}</td><td>{{ r.sales }}</td><td>{{ money(r.purchase, cur, 0) }}</td><td>{{ money(r.cash_in, cur, 0) }}</td><td>{{ money(r.cash_out, cur, 0) }}</td><td class="{{ 's-bad' if r.cumulative < 0 }}">{{ money(r.cumulative, cur, 0) }}</td></tr>{% endfor %}
+      </table></div>
+      <p class="small muted">Считает код по формулам, без модели. Курс: {{ (econ.get('fx') or {}).get('source', '') }}. VAT в выручку не входит.</p>
+      </details>
+    {% else %}
+      <div class="notice n-warn">Экономику посчитать нельзя — неизвестно: {{ (em.get('missing_labels') or [])|join(', ') }}. Впишите ниже (неизвестное — не ноль).</div>
+    {% endif %}
+
+    {% if mi and is_latest %}
+    <details {% if em.get('status') != 'ok' %}open{% endif %} style="margin-top:10px"><summary>Изменить цифры ({{ mi.get('currency') }})</summary>
+      <form method="post" action="/ideas/{{ idea.id }}/econ">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="market" value="{{ mk }}">
+        <div class="grid g3">
+        {% for key, label in FIELD_LABELS.items() %}{% set meta = (mi.get('_meta') or {}).get(key) or {} %}
+          <div><label>{{ label }} {% if meta %}{{ M.type_badge(meta.get('type')) }}{% endif %}</label>
+          {% if key == 'price_includes_vat' %}<label style="color:var(--text)"><input type="checkbox" name="price_includes_vat" value="1" style="width:auto" {{ 'checked' if mi.get(key) }}> да</label>
+          {% elif key == 'unit_cost_currency' %}<select name="unit_cost_currency">{% for c_ in ['USD','AED'] %}<option {{ 'selected' if mi.get(key)==c_ }}>{{ c_ }}</option>{% endfor %}</select>
+          {% else %}<input name="{{ key }}" value="{{ mi.get(key) if mi.get(key) is not none else '' }}" inputmode="decimal" placeholder="неизвестно">{% endif %}
+          {% if meta.get('source') %}<div class="small muted" style="word-break:break-word">{{ M.src(meta.source) if meta.source.startswith('http') else meta.source }}</div>{% endif %}
+          </div>
+        {% endfor %}
+        </div>
+        {% for key, title in [('fixed_monthly','Постоянные расходы в месяц'),('one_time','Разовые расходы на старт')] %}
+          <h3>{{ title }}</h3>
+          {% for it in (mi.get(key) or []) + [{'name':'','amount':'','currency':mi.get('currency')}] %}
+          <div class="row" style="margin-bottom:6px"><input name="{{ key }}_name" value="{{ it.name }}" placeholder="Статья" style="flex:2;min-width:140px">
+            <input name="{{ key }}_amount" value="{{ it.amount }}" placeholder="Сумма" style="flex:1;min-width:80px" inputmode="decimal">
+            <select name="{{ key }}_currency" style="width:90px">{% for c_ in ['USD','AED'] %}<option {{ 'selected' if it.currency==c_ }}>{{ c_ }}</option>{% endfor %}</select></div>
+          {% endfor %}
+        {% endfor %}
+        <button class="btn primary" style="margin-top:10px">Пересчитать</button>
+      </form>
+    </details>
+    {% endif %}
+  </section>
+</div>
+{% endfor %}
+
+{# ---------- сравнение ---------- #}
+<div class="panel" id="panel-compare">
+  <section class="card">
+    <h2>Какой рынок первым</h2>
+    <p class="lead"><b>{{ sc.get('market_label') }}</b></p>
+    {% if sc.get('market_note') %}<p class="small muted">{{ sc.market_note }}</p>{% endif %}
+    {% if mrep.get('market_reasoning') %}<p>{{ mrep.market_reasoning }}</p>{% endif %}
+    {% if mrep.get('second_market_conditions') %}<p><b class="l">Когда выходить на второй рынок</b><br>{{ mrep.second_market_conditions }}</p>{% endif %}
+    {% set ns = mrep.get('next_step') or {} %}
+    {% if ns.get('action') %}<p><b>Следующий шаг:</b> {{ ns.action }}{% if ns.get('cost') %} · {{ ns.cost }}{% endif %}{% if ns.get('success_criterion') %}<br><span class="small muted">Как понять, что получилось: {{ ns.success_criterion }}</span>{% endif %}</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Оценка {{ '%.1f'|format(sc.score) if sc.get('score') is not none else '—' }}/10 <span class="small muted">— не вероятность успеха</span></h2>
+    <div class="tw"><table>
+      <tr><th>Часть оценки</th><th>Вес</th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}</th>{% endfor %}</tr>
+      {% for key, label in (sc.get('labels') or {}).items() %}
+      <tr><td>{{ label }}</td><td>{{ (sc.weights[key]*100)|round|int }}%</td>
+        {% for mk in MARKETS %}{% set c = per.get(mk, {}).get('components', {}).get(key, {}) %}<td>{{ M.score_badge(c.get('score')) }}<div class="small muted">{{ c.get('why') or '' }}</div></td>{% endfor %}</tr>
+      {% endfor %}
+      <tr><td><b>Итог</b></td><td></td>{% for mk in MARKETS %}{% set pm = per.get(mk, {}) %}<td><b>{{ M.score_badge(pm.get('score')) }}</b> {{ M.verdict_badge(VERD.get(pm.get('verdict'))) }}{% if pm.get('caps') %}<div class="small muted">Ограничено: {{ pm.caps|join(', ') }}</div>{% endif %}</td>{% endfor %}</tr>
+    </table></div>
+    <details style="margin-top:10px"><summary>Как считается оценка</summary><ul class="small">{% for r in rules %}<li>{{ r }}</li>{% endfor %}</ul></details>
+  </section>
+
+  <section class="card">
+    <h2>Рынки рядом</h2>
+    <div class="tw"><table>
+      <tr><th style="width:160px"></th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}{% if mk == chosen %} ★{% endif %}</th>{% endfor %}</tr>
+      <tr><td>Коротко</td>{% for mk in MARKETS %}{% set m = markets.get(mk) or {} %}<td class="small">{{ (m.get('pitch') or {}).get('one_liner') or m.get('summary') or '—' }}</td>{% endfor %}</tr>
+      <tr><td>Цены конкурентов</td>{% for mk in MARKETS %}{% set pr = (markets.get(mk) or {}).get('price_range') or {} %}<td>{% if pr.get('low') is not none %}{{ money(pr.low, '', 0) }}–{{ money(pr.high, pr.currency, 0) }}{% else %}—{% endif %}</td>{% endfor %}</tr>
+      <tr><td>Остаётся с заказа</td>{% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}<td>{% if em.get('status') == 'ok' %}{{ money(em.scenarios.base.per_order.CM2, em.currency) }} · ≈ {{ money(em.scenarios.base.in_base.CM2, econ.base_currency) }}{% else %}—{% endif %}</td>{% endfor %}</tr>
+      <tr><td>Прибыль в месяц</td>{% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}<td>{% if em.get('status') == 'ok' %}{{ money(em.scenarios.base.operating_profit, em.currency, 0) }} · ≈ {{ money(em.scenarios.base.in_base.operating_profit, econ.base_currency, 0) }}{% else %}—{% endif %}</td>{% endfor %}</tr>
+      <tr><td>Деньги на старт</td>{% for mk in MARKETS %}{% set em = econ.get('markets', {}).get(mk, {}) %}<td>{% if em.get('status') == 'ok' %}≈ {{ money(em.scenarios.base.in_base.startup_cash_need, econ.base_currency, 0) }}{% else %}—{% endif %}</td>{% endfor %}</tr>
+      {% for key, label in [('payments','Платежи'),('legal','Законный запуск'),('fulfilment','Доставка заказов'),('product_requirements','Требования / права')] %}
+      <tr><td>{{ label }}</td>{% for mk in MARKETS %}{% set g = ((markets.get(mk) or {}).get('launch_feasibility') or {}).get(key) or {} %}<td class="small">{{ FEAS.get(g.get('status','unknown'), g.get('status')) }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </table></div>
+  </section>
+
+  <section class="card">
+    <h2>Риски и что не подтверждено</h2>
+    {% if mrep.get('main_risk') %}<p><b>Главный риск:</b> {{ mrep.main_risk }}</p>{% endif %}
+    <div class="grid g2">
+      <div><h3>Почему может не сработать</h3><ul>{% for r in mrep.get('risks') or [] %}<li>{{ r }}</li>{% else %}<li class="muted">—</li>{% endfor %}</ul></div>
+      <div><h3>Что не подтверждено</h3><ul>{% for g in mrep.get('data_gaps') or [] %}<li>{{ g }}</li>{% else %}<li class="muted">—</li>{% endfor %}</ul></div>
+    </div>
+    {% if mrep.get('alt_explanations') %}<h3>А может, интерес временный?</h3><ul>{% for a in mrep.alt_explanations %}<li><b>{{ a.get('explanation') }}</b> — {{ a.get('assessment') }}</li>{% endfor %}</ul>{% endif %}
+  </section>
+</div>
+
+{# ---------- производство ---------- #}
+<div class="panel" id="panel-production">
+  <section class="card">
+    <h2>Как производить</h2>
+    {% if prod.get('recommended_reason') %}<p class="lead">{{ prod.recommended_reason }}</p>{% endif %}
+    {% for o in prod.get('options') or [] %}{% set su = o.get('startup_cost') or {} %}{% set uc = o.get('unit_cost') or {} %}
+      <div class="card" style="margin-bottom:10px;{% if o.get('key') == prod.get('recommended_option') %}border-color:var(--good){% endif %}">
+        <div class="row" style="justify-content:space-between"><b>{{ o.get('name') }}</b>{% if o.get('key') == prod.get('recommended_option') %}<span class="badge b-good">рекомендуем</span>{% endif %}</div>
+        <p class="small" style="margin:6px 0">{{ o.get('operations') or '' }}{% if o.get('equipment') %} · Оборудование: {{ o.equipment }}{% endif %}</p>
+        <div class="tiles">
+          <div class="tile"><div class="k">На старт</div><div class="v">{{ money(su.get('value'), su.get('currency') or '', 0) }}</div><div class="s">{{ TYPE_LABEL.get(su.get('type'), '') }}</div></div>
+          <div class="tile"><div class="k">За единицу</div><div class="v">{{ money(uc.get('value'), uc.get('currency') or '') }}</div><div class="s">{{ TYPE_LABEL.get(uc.get('type'), '') }}{% if uc.get('source_url') %} · {{ M.src(uc.source_url) }}{% endif %}</div></div>
+          <div class="tile"><div class="k">Минимальная партия</div><div class="v" style="font-size:15px">{{ o.get('moq') or '—' }}</div></div>
+          <div class="tile"><div class="k">Срок</div><div class="v">{{ o.get('lead_time_days') or '—' }} дн.</div></div>
+        </div>
+        <p class="small muted" style="margin:8px 0 0">{{ o.get('quality') or '' }} {{ o.get('capacity') or '' }} {% if o.get('risks') %}Риски: {{ o.risks }}{% endif %}</p>
+      </div>
+    {% else %}<p class="muted">Производство ещё не исследовано.</p>{% endfor %}
+    {% set eb = prod.get('equipment_breakeven') or {} %}{% if eb.get('explanation') %}<p class="small"><b>Когда своё оборудование выгоднее:</b> {{ eb.get('units_per_month') or '—' }} шт/мес. {{ eb.explanation }}</p>{% endif %}
+    <form method="post" action="/ideas/{{ idea.id }}/refine" class="row" style="margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input name="text" placeholder="Например: не хотим покупать оборудование / найди подрядчиков в ОАЭ" style="flex:1;min-width:200px" required>
+      <button class="btn">Пересмотреть</button>
+    </form>
+  </section>
+  {% if prod.get('contractors') %}
+  <section class="card">
+    <h2>Подрядчики</h2>
+    {% for mk in MARKETS %}{% set cs_ = (prod.contractors or [])|selectattr('market', 'equalto', mk)|list %}{% if cs_ %}
+      <h3>{{ MARKET_LABEL[mk] }}</h3>
+      <div class="tw"><table><tr><th>Кто</th><th>Где / что делают</th><th>Сроки, образцы</th><th>Цена</th><th>Контакт</th></tr>
+      {% for c in cs_ %}<tr><td>{{ M.src(c.get('url'), c.get('name')) }}</td><td class="small">{{ c.get('location') or '' }}<br>{{ c.get('services') or '' }}{% if c.get('small_batch_terms') %}<br>{{ c.small_batch_terms }}{% endif %}</td><td class="small">{{ c.get('lead_time') or '' }}<br>{{ c.get('samples') or '' }}</td><td class="small">{{ c.get('price') or 'нужен запрос' }}</td><td class="small">{{ c.get('contact') or '—' }}</td></tr>{% endfor %}
+      </table></div>
+    {% endif %}{% endfor %}
+    {% if prod.get('quote_request_draft') %}<details style="margin-top:12px"><summary>Черновик письма-запроса цены (бот сам не отправляет)</summary><pre>{{ prod.quote_request_draft }}</pre></details>{% endif %}
+  </section>
+  {% endif %}
+</div>
+
+{# ---------- данные и источники ---------- #}
+<div class="panel" id="panel-data">
+  <section class="card" id="evidence">
+    <h2>Добавленные данные</h2>
+    {% if request.query_params.get('err') %}<div class="notice n-bad">{{ request.query_params.get('err') }}</div>{% endif %}
+    {% for e in evidence %}{% set p = e.payload|fromjson %}
+      <div class="small" style="margin-bottom:8px"><span class="badge b-muted">{{ MARKET_LABEL.get(e.market, e.market) }}</span> <b>{{ e.source }}</b>
+        {% if e.kind == 'trends_csv' %} · период {{ e.period }} · получено {{ e.retrieved_at[:10] }}
+          {% for name, st in (p.get('stats') or {}).items() %}<br>«{{ name }}»: последние недели {{ st.last4_avg }}, тренд {{ pct(st.momentum) }}, год к году {{ pct(st.yoy) }}, пик — месяц {{ st.peak_month }}{% if st.low_base %} <span class="badge b-warn">мало запросов</span>{% endif %}{% endfor %}
+        {% elif e.kind == 'comtrade' %} · {% for s_ in p.get('series') or [] %}{{ s_.year }}: {{ money(s_.import_usd, 'USD', 0) if s_.import_usd is not none else '—' }}{{ '; ' if not loop.last }}{% endfor %}
+        {% else %} · {{ p.get('note') }} {{ p.get('value') or '' }} {{ p.get('unit') or '' }} {% if e.url %}· {{ M.src(e.url) }}{% endif %}{% endif %}
+      </div>
+    {% else %}<p class="muted small">Пока нет. Google Trends и наблюдения из Keyword Planner, Meta, TikTok добавляются здесь вручную.</p>{% endfor %}
+    <div class="grid g2" style="margin-top:12px">
+      <form method="post" action="/ideas/{{ idea.id }}/trends" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <h3>Google Trends (CSV)</h3>
+        <label>Рынок</label><select name="market">{% for mk in MARKETS %}<option value="{{ mk }}">{{ MARKET_LABEL[mk] }}</option>{% endfor %}</select>
+        <label>Файл multiTimeline.csv</label><input type="file" name="file" accept=".csv,text/csv" required>
+        <button class="btn" style="margin-top:10px">Загрузить</button>
+      </form>
+      <form method="post" action="/ideas/{{ idea.id }}/evidence">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <h3>Своё наблюдение</h3>
+        <div class="row"><select name="source" style="flex:1">{% for s_ in ['Google Ads Keyword Planner','Meta Ad Library','TikTok Creative Center','Amazon.com','Amazon.ae','Noon','Etsy','Котировка подрядчика','UAE.Stat','Другое'] %}<option>{{ s_ }}</option>{% endfor %}</select>
+          <select name="market" style="flex:1">{% for mk in MARKETS %}<option value="{{ mk }}">{{ MARKET_LABEL[mk] }}</option>{% endfor %}</select></div>
+        <label>Что увидели</label><input name="note" required placeholder="Например: 1–10 тыс. запросов в месяц">
+        <div class="row"><input name="value" placeholder="Значение" style="flex:1"><input name="unit" placeholder="Единица" style="flex:1"><input name="period" placeholder="Период" style="flex:1"></div>
+        <label>Ссылка</label><input name="url" placeholder="https://">
+        <button class="btn" style="margin-top:10px">Добавить</button>
+      </form>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Источники разбора</h2>
+    {% set srcs = (mrep.get('sources') or []) + (prod.get('sources') or []) %}
+    {% if srcs %}<div class="tw"><table><tr><th>Источник</th><th>Рынок</th><th>Для чего</th></tr>
+      {% for s_ in srcs %}<tr><td>{{ M.src(s_.get('url'), s_.get('title')) }}</td><td class="nowrap small">{{ MARKET_LABEL.get(s_.get('market'), 'оба' if s_.get('market')=='both' else s_.get('market')) }}</td><td class="small">{{ s_.get('used_for') or '' }}</td></tr>{% endfor %}
+    </table></div>{% else %}<p class="muted">Нет.</p>{% endif %}
+    {% set seen = report.get('seen_sources') or [] %}
+    {% if seen %}<details style="margin-top:10px"><summary>Все просмотренные страницы ({{ seen|length }})</summary><ul class="small">{% for s_ in seen %}<li>{{ M.src(s_.url, s_.title) }}{% if s_.page_age %} <span class="muted">· {{ s_.page_age }}</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
+    <p class="small muted">Разбор от {{ (report.get('generated_at') or '')[:16]|replace('T',' ') }} UTC, модель {{ report.get('model') or '' }}. {{ M.type_badge('observation') }} видели на странице · {{ M.type_badge('estimate') }} оценка · {{ M.type_badge('assumption') }} допущение.</p>
+  </section>
+</div>
+
+{# ---------- история ---------- #}
+<div class="panel" id="panel-history">
+  <section class="card">
+    <h2>Версии</h2>
+    {% for v in versions %}<div class="small" style="margin-bottom:6px"><a href="/ideas/{{ idea.id }}?v={{ v.version }}">v{{ v.version }}</a> · {{ v.created_at[:16]|replace('T',' ') }} UTC — {{ v.change_summary or '' }}{% if v.change_request and v.version > 1 %}<br><span class="muted">Запрос: {{ v.change_request }}</span>{% endif %}</div>{% endfor %}
+    {% if qa %}<h3>Вопросы и ответы</h3>{% for q in qa %}<div class="small" style="margin-bottom:10px"><b>{{ q.question }}</b><br>{{ q.answer }}</div>{% endfor %}{% endif %}
+    <h3>Что вы прислали</h3>
+    <pre>{{ idea.input_text }}</pre>
+    {% if idea.region_hint %}<p class="small">Регион конкурентов: <b>{{ idea.region_hint }}</b></p>{% endif %}
+    {% for l in links %}<div class="small">{{ M.src(l.url) }} — {{ 'прочитано' if l.ok else (l.error or 'ещё не загружено') }}</div>{% endfor %}
+    <div class="row">{% for m_ in media %}{% set name = m_.path.split('/')[-1] %}<img class="thumb" src="/media/{{ idea.user_id }}/{{ name }}" alt="фото">{% endfor %}</div>
+  </section>
+</div>
 {% endif %}
 
-<section id="refine" class="card">
+{# ---------- уточнить (всегда видно) ---------- #}
+<section class="card" id="refine">
   <h2>Уточнить идею</h2>
-  {% for q in qa %}<div class="small" style="margin-bottom:10px"><b>Вопрос:</b> {{ q.question }}<br><b>Ответ:</b> {{ q.answer }} <span class="muted">· {{ q.created_at[:16]|replace('T',' ') }}</span></div>{% endfor %}
   <form method="post" action="/ideas/{{ idea.id }}/refine">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <textarea name="text" required placeholder="«А если партия 50 шт?», «сравни с ОАЭ», «проверь доставку, остальное подходит», «какой CAC заложен?»"></textarea>
+    <textarea name="text" required style="min-height:80px" placeholder="«Давай только ёлочные игрушки с именами», «а если партия 50 шт?», «сравни доставку в ОАЭ», «какой бюджет на рекламу заложен?»"></textarea>
     <button class="btn primary" style="margin-top:8px">Отправить</button>
-    <span class="small muted">Пересчитываются только затронутые разделы; смена цифр не запускает повторный поиск.</span>
+    <span class="small muted">Обновятся только затронутые разделы; смена цифр не запускает платный поиск.</span>
   </form>
 </section>
 
-<section id="history" class="card">
-  <h2>История версий</h2>
-  {% for v in versions %}<div class="small" style="margin-bottom:6px"><a href="/ideas/{{ idea.id }}?v={{ v.version }}">v{{ v.version }}</a> · {{ v.created_at[:16]|replace('T',' ') }} UTC — {{ v.change_summary or '' }}{% if v.change_request and v.version > 1 %}<br><span class="muted">Запрос: {{ v.change_request }}</span>{% endif %}</div>{% else %}<p class="muted">Версий пока нет.</p>{% endfor %}
-  <h3>Исходный ввод</h3>
-  <pre>{{ idea.input_text }}</pre>
-  {% if idea.region_hint %}<p class="small">Регион конкурентов: <b>{{ idea.region_hint }}</b></p>{% endif %}
-  {% for l in links %}<div class="small">{{ M.src(l.url) }} — {{ 'прочитано' if l.ok else (l.error or 'ещё не загружено') }}</div>{% endfor %}
-  <div class="row">{% for m in media %}{% set name = m.path.split('/')[-1] %}<img class="thumb" src="/media/{{ idea.user_id }}/{{ name }}" alt="фото">{% endfor %}</div>
-</section>
-
-{% if idea.status in ('queued','researching') %}
 <script>
+(function(){
+  var bar=document.getElementById('tabbar'); if(!bar) return;
+  function show(t){
+    var p=document.getElementById('panel-'+t); if(!p){t='{{ default_tab }}';p=document.getElementById('panel-'+t);}
+    document.querySelectorAll('.panel').forEach(function(x){x.classList.toggle('on',x===p)});
+    bar.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.tab===t)});
+  }
+  bar.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;history.replaceState(null,'','#'+b.dataset.tab);show(b.dataset.tab);window.scrollTo({top:bar.offsetTop-60,behavior:'smooth'});});
+  var h=(location.hash||'').slice(1).split('-')[0]; show(h||'{{ default_tab }}');
+  document.querySelectorAll('.region-input').forEach(function(i){i.form.addEventListener('submit',function(){
+    if(i.value && !/^найди/i.test(i.value)) i.value='Найди конкурентов ('+i.dataset.market+') в регионе: '+i.value;});});
+})();
+{% if idea.status in ('queued','researching') %}
 (function(){var v={{ idea.current_version or 0 }},s="{{ idea.status }}";
 setInterval(function(){fetch("/ideas/{{ idea.id }}/status").then(function(r){return r.json()}).then(function(d){
  if(d.version!==v||d.status!==s){location.reload()}}).catch(function(){})},5000)})();
-</script>
 {% endif %}
+</script>
 {% endblock %}
