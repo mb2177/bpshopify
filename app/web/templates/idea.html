@@ -99,6 +99,7 @@
 <div class="seg" id="tabbar">
   {% for mk in MARKETS %}<button data-tab="{{ mk|lower }}">{{ MARKET_LABEL[mk] }}{% if per.get(mk) %}<span class="sc t-{{ M.tone(per[mk].score)|trim }}">{{ '%.1f'|format(per[mk].score) }}</span>{% endif %}</button>{% endfor %}
   <button data-tab="compare">Сравнение</button>
+  <button data-tab="basis">На чём основан ответ</button>
   <span class="gap"></span>
   <button data-tab="production">Производство</button>
   <button data-tab="data">Данные</button>
@@ -449,6 +450,41 @@
  </div>
 </div>
 
+<div class="panel" id="panel-basis">
+ <div class="surface"><section class="sec">
+  <h2>На чём основан ответ</h2>
+  <p>{{ explanation.summary }}</p>
+  <div class="row" style="margin:14px 0">
+   <form method="post" action="/ideas/{{ idea.id }}/analytics"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn primary">Обновить данные API</button></form>
+   <a class="btn ghost" href="/sources">Подключить аналитику</a>
+  </div>
+  <p class="small muted">Обновление данных использует подключённые аналитические сервисы в пределах лимитов. Запросов к модели нет. Действующий кеш используется бесплатно.</p>
+  {% if explanation.facts %}
+   <div class="tw"><table><tr><th>Измерение</th><th>Значение</th><th>Источник и период</th></tr>
+   {% for fact in explanation.facts %}<tr><td>{{ fact.name }}<div class="small muted">{{ MARKET_LABEL[fact.market] }}</div></td><td>{{ money(fact.value,fact.unit) }}{% if not fact.fresh %}<br><span class="st wait">Устарело</span>{% endif %}</td><td><a href="{{ fact.source_url }}" target="_blank" rel="noopener">{{ fact.provider }}</a><div class="small muted">{{ fact.period or 'Период не указан' }}<br>Получено {{ (fact.retrieved_at or '')[:16]|replace('T',' ') }} UTC{% if fact.cached %}, из кеша{% endif %}</div></td></tr>{% endfor %}</table></div>
+  {% else %}<div class="notice n-warn">Измерений из аналитических API в этой версии пока нет. <a href="/sources">Добавьте ключи</a> и обновите данные. Числа в гипотезах модели не считаются измерениями.</div>{% endif %}
+  {% for bundle in report.get('analytics') or [] %}{% if bundle.kind=='trends_api' and bundle.get('series') %}<details style="margin-top:16px"><summary>Динамика Trends · {{ MARKET_LABEL[bundle.market] }}</summary>{% for keyword,points in bundle.series.items() %}{% if points|length>1 %}<p class="small">{{ keyword }} · {{ bundle.period }}</p><svg viewBox="0 0 600 105" role="img" aria-label="Google Trends {{ keyword }} {{ MARKET_LABEL[bundle.market] }}" style="width:100%;max-width:700px;height:auto"><line x1="0" y1="100" x2="600" y2="100" stroke="currentColor" opacity="0.2"/><polyline points="{{ sparkline(points) }}" fill="none" stroke="currentColor" stroke-width="2"/></svg><p class="small muted">Шкала от 0 до 100. Пустые точки источника исключены.</p>{% endif %}{% endfor %}</details>{% endif %}{% endfor %}
+  <div class="grid g2" style="margin-top:20px">
+  {% for market in explanation.markets %}<div><h3>{{ MARKET_LABEL[market.market] }}</h3>
+   <p>Наборов измерений {{ market.analytics_count }}, проверенных наблюдений {{ market.observations }}.</p>
+   {% if market.demand_method %}<p class="small">{{ market.demand_method }}</p>{% endif %}
+   <p class="small">Расчёт по введённым параметрам — остаётся с заказа {{ money(market.margin_per_order,market.currency) }}, требуется на старт {{ money(market.cash_need,market.currency) }}.</p>
+   {% if market.missing %}<p class="small"><b>Требует подтверждения</b><br>{{ market.missing|join(', ') }}.</p>{% endif %}
+   {% if market.stops %}<p class="small s-bad"><b>Препятствия</b><br>{{ market.stops|join(', ') }}.</p>{% endif %}
+   {% for source in market.sources %}<p class="small"><a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.claim or 'Подтверждённое наблюдение' }}</a>{% if source.quote %}<br>«{{ source.quote }}»{% endif %}</p>{% endfor %}
+   {% for check in market.preference_checks %}<p class="small">{{ GATE_ICON.get(check.status) }} {{ check.label }} — отзыв #{{ check.feedback_id }}.</p>{% endfor %}
+  </div>{% endfor %}
+  </div>
+  <h3>Как учтены ваши комментарии</h3>
+  {% if explanation.memory_verified %}<p class="small muted">В запрос к модели переданы следующие отзывы. Снимок сохранён для этой версии {{ (explanation.memory_captured_at or '')[:16]|replace('T',' ') }} UTC.</p>
+   {% for item in explanation.feedback_sent %}<div style="padding:10px 0;border-top:1px solid var(--line)"><a class="small" href="/ideas/{{ item.idea_id }}#feedback">Отзыв #{{ item.id }} к версии {{ item.version }} — {{ item.title }}</a><p class="small">{{ item.reason }}</p></div>{% else %}<p>В момент исследования сохранённых отзывов ещё не было.</p>{% endfor %}
+  {% else %}<p class="muted">Для этой версии нет сохранённой отметки передачи комментариев модели. Новый полный разбор сохранит такой снимок.</p>{% endif %}
+  {% if explanation.rules %}<p class="small"><b>Обязательные предпочтения</b> — {% for rule in explanation.rules %}{{ rule.label }} (отзыв #{{ rule.feedback_id }}){% if not loop.last %}, {% endif %}{% endfor %}. Они проверяются кодом. Неизвестная характеристика требует подтверждения.</p>{% endif %}
+  <details><summary>Что ответила модель об отзыве</summary>{% for mk in MARKETS %}{% for item in (markets.get(mk) or {}).get('feedback_response') or [] %}<p class="small">{{ MARKET_LABEL[mk] }} · отзыв #{{ item.feedback_id }} — {{ item.action }}</p>{% endfor %}{% endfor %}<p class="small muted">Это объяснение модели. Статусы обязательных предпочтений проверены отдельно.</p></details>
+  <p class="small muted" style="margin-top:20px">{{ explanation.limitations }}</p>
+ </section></div>
+</div>
+
 <div class="panel" id="panel-history">
  <div class="surface">
   <section class="sec">
@@ -477,6 +513,7 @@
     <label for="feedback-comment">Что понравилось или что нужно изменить</label>
     <textarea id="feedback-comment" name="comment" required maxlength="3000" placeholder="Хочется больше круглогодичных товаров для США. Нужна возможность выпускать партии у подрядчика и расти без ручной работы над каждым заказом." style="min-height:110px"></textarea>
     <label><input type="checkbox" name="remember" checked style="width:auto"> Учитывать эту причину в будущих идеях</label>
+    <details style="margin:12px 0"><summary>Сделать предпочтение обязательным</summary><p class="small muted">Выбранные условия будут проверяться кодом в будущих идеях. При неизвестной характеристике бот попросит подтверждение.</p>{% for key,rule in feedback_rule_options.items() %}<label><input type="checkbox" name="rules" value="{{ key }}" style="width:auto"> {{ rule.label }}</label>{% endfor %}</details>
     <label><input type="checkbox" name="revise" style="width:auto"> Также обновить этот разбор в пределах бюджета исследования</label>
     <div class="row" style="margin-top:12px"><button class="btn primary">Сохранить отзыв</button><span class="small muted">Сохранение отзыва бесплатно. Обновление разбора использует API.</span></div>
   </form>

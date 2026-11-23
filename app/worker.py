@@ -102,6 +102,10 @@ def run_job(job) -> None:
         research.run_recalculate(job)
     elif kind == "refresh":
         research.run_refresh(job)
+    elif kind == "analytics":
+        research.run_analytics(job)
+    elif kind == "connection_check":
+        research.run_connection_check(job)
     else:
         raise ValueError(f"Неизвестный тип задачи {kind}")
 
@@ -147,9 +151,9 @@ def main() -> None:
         # Upgrade saved reports using stored data. No external model calls are needed for this job.
         for idea in conn.execute("SELECT id,user_id,current_version FROM ideas WHERE current_version>0").fetchall():
             version = db.latest_version(conn,idea["id"])
-            if db.jload(version["report"],{}).get("schema_version") != 2:
+            if db.jload(version["report"],{}).get("schema_version") != 3:
                 jobs.enqueue(conn,idea["user_id"],"recalculate",idea["id"],
-                             dedupe_key=f"schema2:{idea['id']}:{idea['current_version']}")
+                             dedupe_key=f"schema3:{idea['id']}:{idea['current_version']}")
     if n:
         log.info("Возвращено в очередь после перезапуска: %s", n)
     last_sched = 0.0

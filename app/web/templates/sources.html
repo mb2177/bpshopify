@@ -1,7 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="pagehead"><div><h1>Источники данных</h1></div></div>
-<p class="muted">Статусы честные: «ручной импорт» не работает сам. Бот не обходит авторизацию, CAPTCHA и ограничения сайтов.</p>
+<p class="muted">Добавьте ключи аналитических сервисов. После проверки подключения бот получает измерения автоматически. Ключи сохраняются зашифрованными и не возвращаются на страницу.</p>
+{% if request.query_params.get('saved') %}<div class="notice n-info">Настройки подключения сохранены. Теперь проверьте подключение.</div>{% endif %}
+<h2>Подключения API</h2>
+{% for p in integrations %}<section class="card" id="{{ p.id }}">
+ <div class="row" style="justify-content:space-between"><h2>{{ p.name }}</h2><span class="st {{ 'go' if p.status=='подключён' else 'wait' }}">{{ p.status }}</span></div>
+ <p>{{ p.what }}</p><p class="small">{{ p.coverage }}</p><p class="small muted">{{ p.billing }}</p>
+ <div class="row"><a href="{{ p.signup }}" target="_blank" rel="noopener">Получить ключ</a><a href="{{ p.docs }}" target="_blank" rel="noopener">Документация</a></div>
+ <form method="post" action="/sources/{{ p.id }}/credentials" style="margin-top:16px">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <div class="grid g2">{% for key,label in p.fields %}<div><label for="{{ key }}">{{ label }}</label><input id="{{ key }}" type="password" name="{{ key }}" autocomplete="new-password" maxlength="4096" placeholder="Вставьте новый ключ или оставьте пустым"></div>{% endfor %}</div>
+  <button class="btn primary" style="margin-top:12px">Сохранить ключи</button>
+ </form>
+ <div class="row" style="margin-top:12px"><form method="post" action="/sources/{{ p.id }}/check"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn">Проверить подключение</button></form><form method="post" action="/sources/{{ p.id }}/credentials"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="action" value="clear"><button class="btn ghost">Удалить ключи, сохранённые в кабинете</button></form></div>
+ <p class="small muted">Проверка отправляет один запрос и расходует квоту провайдера. Keepa использует один ASIN из ваших ссылок. Пустое поле сохраняет прежний ключ. Настройки сервера продолжают действовать.</p>
+ {% if p.check.get('last_ok_at') %}<p class="small">Успешный запрос {{ p.check.last_ok_at[:16]|replace('T',' ') }} UTC.</p>{% endif %}
+ {% if p.check.get('last_error') %}<p class="small s-bad">{{ p.check.last_error }}</p>{% endif %}
+</section>{% endfor %}
+<div class="notice n-info">Для начала достаточно DataForSEO, SearchApi и Keepa. Отдельный доступ разработчика Google Ads для них не нужен. Census дополняет контекст рынка. TikTok Ad Library не покрывает США и ОАЭ — её европейские показатели не будут подставлены вместо нужного рынка.</div>
+{% if checks %}<details class="card"><summary>Последние проверки подключений</summary>{% for item in checks %}<p class="small">#{{ item.id }} · {{ (item.payload|fromjson).get('provider') }} · {{ item.status }}{% if item.error %} · {{ item.error }}{% endif %}</p>{% endfor %}</details>{% endif %}
+<h2>Паспорта источников и ручные загрузки</h2>
 {% set cls = {'автоматически':'go','нужен ключ':'wait','ручной импорт':'unk','недоступно':'stop','после запуска магазина':'unk'} %}
 {% for p in passports %}
 <div class="card">
@@ -21,4 +40,7 @@
   {% if p.get('howto') %}<p class="small" style="margin-top:8px"><b>Как подключить:</b> {{ p.howto }}</p>{% endif %}
 </div>
 {% endfor %}
+{% set state = namespace(busy=false) %}{% for item in checks if item.status in ('queued','running') %}{% set state.busy=true %}{% endfor %}
+{% if state.busy %}<script>setTimeout(function(){location.reload()},5000);</script>{% endif %}
 {% endblock %}
+

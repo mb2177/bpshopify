@@ -6,7 +6,7 @@ from collections import Counter
 import httpx
 from fastapi.testclient import TestClient
 
-from . import config, db, sources, jobs, llm
+from . import config, db, sources, jobs, llm, analytics, memory
 from .web.main import app
 
 
@@ -63,6 +63,7 @@ def main():
         page = client.get(f"/ideas/{idea['id']}")
         assert page.status_code == 200, f"Report rendering failed: {idea['id']}"
         assert f'action="/ideas/{idea["id"]}/feedback"' in page.text, "Feedback form missing"
+        assert 'id="panel-basis"' in page.text or not idea["current_version"], "Evidence summary tab missing"
         if idea["current_version"]:
             assert 'id="panel-plan"' in page.text, "Test plan missing"
             oldest = client.get(f"/ideas/{idea['id']}?v=1")
@@ -75,7 +76,7 @@ def main():
                    for idea in ideas if idea["current_version"]]
     print("RUNTIME_CHECK " + json.dumps({"routes":"ok", "reports":len(ideas),
         "historical_versions":"ok", "csrf":"ok", "paid_calls":0,
-        "schema2_reports":schemas.count(2), "market_priority":settings["market_priority"],
+        "schema3_reports":schemas.count(3), "market_priority":settings["market_priority"],
         "evergreen_first":settings["evergreen_first"], "profile_complete":bool(profile.get("budget_start")) and bool(profile.get("hours_per_week")),
         "jobs":statuses}))
     try:
@@ -88,6 +89,11 @@ def main():
         print("PUBLIC_SOURCE " + json.dumps({"source":"census", "status":"unavailable", "error_type":type(exc).__name__}))
     print("SOURCE_ACCESS " + json.dumps({"keyword_planner_api":sources.google_ads_ready(),
         "trends":"manual_csv", "voice":bool(config.OPENAI_API_KEY)}))
+    print("ANALYTICS_CONNECTIONS " + json.dumps({item["id"]:item["status"] for item in analytics.connections(user["id"])}))
+    with db.db() as conn:
+        context = memory.snapshot(conn,user["id"])
+    print("FEEDBACK_MEMORY " + json.dumps({"active_feedback":context["active_feedback_total"],
+        "retrieved":len(context["feedback"]),"rules":len(context["rules"]),"method":context["retrieval"]}))
     if "--verify-research-once" in sys.argv:
         verify_research_once(user["id"],settings)
 

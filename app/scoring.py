@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 import math
 
-from . import config, economics
+from . import config, economics, memory
 from .sources import canonical_url
 from urllib.parse import urlsplit
 import re
@@ -104,6 +104,10 @@ def days_until(dstr: str | None, today: date | None = None):
 def market_gates(mk: str, mreport: dict, econ_m: dict, profile: dict) -> list[dict]:
     """Список проверок обязательных условий: status ok | fail_hard | fail_soft | unknown."""
     gates = []
+    if profile.get("require_analytics"):
+        gates.append({"key":"analytics","label":"Аналитические измерения спроса","status":"ok" if mreport.get("analytics_status")=="ok" else "unknown",
+                      "note":f"Получено наборов измерений — {mreport.get('analytics_count',0)}. Поиск страниц не заменяет измерение динамики и объёма спроса."})
+    gates.extend(memory.check_rules(mreport,profile.get("feedback_rules") or []))
     lf = mreport.get("launch_feasibility", {}) or {}
     for key, label in (("payments", "Приём платежей"), ("legal", "Законный запуск продаж"),
                        ("fulfilment", "Выполнение заказов"), ("product_requirements", "Требования к товару и права на дизайн")):

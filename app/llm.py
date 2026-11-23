@@ -28,6 +28,8 @@ class Ctx:
     research_model: str | None = None   # None → MODEL_RESEARCH; для глубокого разбора — MODEL_DEEP
     budget_group: int | None = None
     force_fresh: bool = False
+    memory_snapshot: dict | None = None
+    analytics_force_fresh: bool = False
 
 
 def _client():

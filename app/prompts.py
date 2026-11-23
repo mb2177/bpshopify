@@ -44,7 +44,16 @@ BASE_RULES = """Ты — исследователь рынка и операци
     сохраняй неизвестными. Факты, которые не удалось проверить, помещай в data_gaps.
 18. Соблюдай компактность. По 3 наиболее сопоставимых конкурента на рынок. Все отсутствующие числа null.
     Обычное текстовое поле содержит одну короткую фразу до 180 символов. Не дублируй аргументы в полях.
-    Чётко разделяй проверенные величины, предварительные оценки и допущения."""
+    Чётко разделяй проверенные величины, предварительные оценки и допущения.
+19. Аналитические измерения API передаются отдельно с датой, страной и единицами. Используй эти числа
+    для выводов о динамике и объёме интереса. Не придумывай недостающие измерения и не заменяй их ссылками.
+    Объёмы близких ключей не суммируются. Индексы Trends из отдельных стран не сравниваются как продажи.
+    CPC не равен CAC. Число объявлений и sales rank не равны количеству заказов.
+20. Обязательные правила из rules должны соблюдаться. Для каждого рынка укажи product_attributes
+    с полями fragile, requires_per_order_handwork, recurring_purchase. Значения true/false либо null,
+    если неизвестно. Не помечай неизвестное как false ради прохождения проверки.
+    В feedback_response перечисли ID переданных отзывов и кратко объясни, как они повлияли на предложение.
+    Отзыв является предпочтением владельца, а не подтверждением спроса."""
 
 PARSE = """Ты разбираешь входящее сообщение владельца для системы проверки товарных идей.
 Определи, что это: новая идея товара, вопрос или прочее. По фото опиши, что видно, но НЕ выдумывай
@@ -116,6 +125,8 @@ MARKET = BASE_RULES + """
         "verdict_plain": "вывод простыми словами: стоит ли браться на этом рынке и что смущает"
       },
       "summary": "2–3 предложения по рынку",
+      "product_attributes":{"fragile":null,"requires_per_order_handwork":null,"recurring_purchase":null},
+      "feedback_response":[{"feedback_id":0,"action":"как изменилось предложение"}],
       "demand": {"summary":"...", "signals":[{"claim":"...","value":null,"unit":"...","period":"...","market":"USA","source_url":"...","source_name":"...","type":"observation|estimate|assumption"}]},
       "intent": "...",
       "language": "язык предложения для покупателя",
@@ -254,7 +265,7 @@ DAILY = BASE_RULES + """
 
 ```json
 {"candidates":[{"title":"...","product":"...","buyer":"...","situation":"...","market_guess":"USA|UAE",
-  "why":"...","is_seasonal":false,"category":"...","scalability":"...","retail_price":null,"unit_cost":null,"currency":"USD|AED","feasibility":"ok|unknown|blocked","evidence":[{"claim":"...","source_url":"...","market":"USA|UAE","scope":"product|category|context"}],"weakness":"..."}],
+  "why":"...","research_keyword":"точный коммерческий запрос на английском","product_attributes":{"fragile":null,"requires_per_order_handwork":null,"recurring_purchase":null},"is_seasonal":false,"category":"...","scalability":"...","retail_price":null,"unit_cost":null,"currency":"USD|AED","feasibility":"ok|unknown|blocked","evidence":[{"claim":"...","source_url":"...","market":"USA|UAE","scope":"product|category|context"}],"weakness":"..."}],
  "chosen_index": 0,
  "no_good_candidate_reason": null,
  "repeat_of_previous": null,

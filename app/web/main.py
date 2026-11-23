@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import config, db, economics, jobs, notify, research, scoring, sources
+from .. import config, db, economics, jobs, notify, research, scoring, sources, analytics, credentials, memory, basis
 from ..worker import next_daily_run
 from . import auth
 
@@ -58,6 +58,7 @@ templates.env.globals.update(money=money, pct=pct, MARKET_LABEL=config.MARKET_LA
                              FIELD_LABELS=economics.FIELD_LABELS, SCENARIO_LABEL=economics.SCENARIO_LABEL,
                              PCT_FIELDS=economics.PCT_FIELDS, SITE_URL=config.SITE_URL, FAKE=config.FAKE_LLM)
 templates.env.filters["fromjson"] = lambda s: db.jload(s, {})
+templates.env.globals["sparkline"] = analytics.sparkline
 
 
 def current_user(request: Request):
@@ -234,6 +235,8 @@ def idea_page(request: Request, idea_id: int, v: int | None = None):
     u = need_user(request)
     idea, ver, versions, evidence, qa, job = _load_idea(u, idea_id, v)
     report = db.jload(ver["report"], {}) if ver else {}
+    explanation = report.get("basis") or basis.build(report,
+        db.jload(ver["econ_results"],{}) if ver else {},db.jload(ver["scoring"],{}) if ver else {})
     with db.db() as conn:
         feedback = db.feedback(conn,u["id"],idea_id)
         progress = {r["step_key"]:dict(r) for r in conn.execute("SELECT * FROM project_progress WHERE idea_id=?",(idea_id,))}
@@ -243,6 +246,7 @@ def idea_page(request: Request, idea_id: int, v: int | None = None):
         refreshed = conn.execute("SELECT last_ok_at FROM source_checks WHERE source=?",(f"idea:{idea_id}:refresh",)).fetchone()
     return render(request, "idea.html", idea=idea, ver=ver, versions=versions, evidence=evidence, qa=qa, job=job,
                   feedback=feedback,progress=progress,research_spend=spend,settings=settings,
+                  explanation=explanation,feedback_rule_options=memory.RULES,
                   last_refresh=refreshed["last_ok_at"] if refreshed else None,
                   report=report, mrep=report.get("market") or {}, prod=report.get("production") or {},
                   econ_inputs=db.jload(ver["econ_inputs"], {}) if ver else {},
@@ -466,18 +470,25 @@ async def idea_keywords(request: Request,idea_id: int,market: str = Form(...),pe
 
 @app.post("/ideas/{idea_id}/feedback")
 def idea_feedback(request: Request,idea_id: int,rating: str = Form(...),comment: str = Form(...),
-                  remember: str = Form(""),revise: str = Form(""),version: int | None = Form(None),csrf_token: str = Form(...)):
+                  remember: str = Form(""),revise: str = Form(""),version: int | None = Form(None),csrf_token: str = Form(...),
+                  rules: list[str] = Form(default=[])):
     u = need_user(request)
     csrf(request,csrf_token)
     with db.db() as conn:
         if not db.get_idea(conn,idea_id,u["id"]):
             raise HTTPException(404)
         try:
+            if any(key not in memory.RULES for key in rules):
+                raise ValueError("Неизвестное предпочтение")
             feedback_id = db.save_feedback(conn,u["id"],idea_id,rating,comment,remember=="on",version)
+            if rules:
+                memory.save_rules(conn,u["id"],feedback_id,rules)
         except ValueError as exc:
             raise HTTPException(400,str(exc))
         if revise=="on":
             jobs.enqueue(conn,u["id"],"refine",idea_id,{"text":comment},dedupe_key=f"feedback-refine:{feedback_id}")
+        elif rules:
+            jobs.enqueue(conn,u["id"],"recalculate",idea_id,dedupe_key=f"feedback-rules:{feedback_id}")
     return go(f"/ideas/{idea_id}?saved=feedback#feedback")
 
 
@@ -490,6 +501,7 @@ def feedback_memory(request: Request,feedback_id: int,remember: int = Form(...),
         if not row:
             raise HTTPException(404)
         conn.execute("UPDATE idea_feedback SET remember=? WHERE id=?",(int(bool(remember)),feedback_id))
+        jobs.enqueue(conn,u["id"],"recalculate",row["idea_id"],dedupe_key=f"memory-recalc:{feedback_id}:{uuid.uuid4().hex}")
     return go(f"/ideas/{row['idea_id']}#feedback")
 
 
@@ -503,6 +515,23 @@ def idea_recalculate(request: Request,idea_id: int,csrf_token: str = Form(...)):
         jobs.enqueue(conn,u["id"],"recalculate",idea_id,dedupe_key=f"manual-recalc:{idea_id}:{uuid.uuid4().hex}")
         db.set_idea(conn,idea_id,status="queued",stage="Пересчитываю сохранённые данные без платного поиска")
     return go(f"/ideas/{idea_id}")
+
+
+@app.post("/ideas/{idea_id}/analytics")
+def idea_analytics(request: Request,idea_id: int,csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    with db.db() as conn:
+        idea = db.get_idea(conn,idea_id,u["id"])
+        if not idea:
+            raise HTTPException(404)
+        if not idea["current_version"]:
+            raise HTTPException(400,"Сначала выполните разбор конкретного товара")
+        busy = conn.execute("SELECT 1 FROM jobs WHERE idea_id=? AND status IN ('queued','running')",(idea_id,)).fetchone()
+        if not busy:
+            jobs.enqueue(conn,u["id"],"analytics",idea_id,dedupe_key=f"analytics:{idea_id}:{uuid.uuid4().hex}")
+            db.set_idea(conn,idea_id,status="queued",stage="Получаю измерения аналитических сервисов")
+    return go(f"/ideas/{idea_id}#basis")
 
 
 @app.post("/ideas/{idea_id}/production")
@@ -581,8 +610,9 @@ def settings_page(request: Request, saved: str = ""):
         user = conn.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone()
         nxt = next_daily_run(conn, u["id"])
         memories = db.feedback(conn,u["id"],remembered=True)
+        active_rules = memory.active_rules(conn,u["id"])
     return render(request, "settings.html", profile=profile, s=s, fields=db.PROFILE_FIELDS, spend=spend,memories=memories,
-                  u=user, saved=saved, timezones=TIMEZONES, next_run=nxt, tg_token=bool(config.TELEGRAM_BOT_TOKEN))
+                  active_rules=active_rules,u=user, saved=saved, timezones=TIMEZONES, next_run=nxt, tg_token=bool(config.TELEGRAM_BOT_TOKEN))
 
 
 @app.post("/settings/profile")
@@ -616,6 +646,15 @@ async def settings_general(request: Request):
             s["market_priority"] = form.get("market_priority")
         s["evergreen_first"] = form.get("evergreen_first")=="on"
         s["refresh_enabled"] = form.get("refresh_enabled")=="on"
+        if form.get("analytics_form_present"):
+            s["require_analytics"] = form.get("require_analytics")=="on"
+            for key in ("analytics_per_idea_usd","analytics_calls_per_idea","analytics_calls_per_month","keepa_tokens_per_month"):
+                try:
+                    value = float(str(form.get(key)).replace(",","."))
+                    if math.isfinite(value) and 0<=value<=100000:
+                        s[key] = value if key.endswith("usd") else int(value)
+                except (TypeError,ValueError):
+                    pass
         t = str(form.get("daily_time", "09:00"))
         if re.match(r"^\d{2}:\d{2}$", t):
             s["daily_time"] = t
@@ -624,7 +663,9 @@ async def settings_general(request: Request):
             s["timezone"] = tz
         for k in ("monthly_budget_usd", "per_idea_budget_usd"):
             try:
-                s[k] = max(0.0, float(str(form.get(k)).replace(",", ".")))
+                amount = float(str(form.get(k)).replace(",", "."))
+                if math.isfinite(amount):
+                    s[k] = max(0.0,amount)
             except (TypeError, ValueError):
                 pass
         db.save_settings(conn, u["id"], s)
@@ -648,8 +689,39 @@ def settings_telegram(request: Request, action: str = Form(...), csrf_token: str
 
 @app.get("/sources", response_class=HTMLResponse)
 def sources_page(request: Request):
-    need_user(request)
-    return render(request, "sources.html", passports=sources.all_passports())
+    u = need_user(request)
+    with db.db() as conn:
+        active = conn.execute("SELECT id,payload,status,error FROM jobs WHERE user_id=? AND kind='connection_check' ORDER BY id DESC LIMIT 8",(u["id"],)).fetchall()
+    return render(request,"sources.html",passports=sources.all_passports(u["id"]),integrations=analytics.connections(u["id"]),checks=active)
+
+
+@app.post("/sources/{provider}/credentials")
+async def integration_save(request: Request,provider: str):
+    u = need_user(request)
+    form = await request.form()
+    csrf(request,form.get("csrf_token"))
+    try:
+        if form.get("action")=="clear":
+            credentials.clear(u["id"],provider)
+        else:
+            credentials.save(u["id"],provider,form)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
+    return go("/sources?saved=1#"+provider)
+
+
+@app.post("/sources/{provider}/check")
+def integration_check(request: Request,provider: str,csrf_token: str=Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    if provider not in analytics.PROVIDERS or not credentials.ready(u["id"],provider):
+        raise HTTPException(400,"Сначала сохраните все ключи подключения")
+    with db.db() as conn:
+        busy = [db.jload(row["payload"],{}).get("provider") for row in conn.execute("SELECT payload FROM jobs WHERE user_id=? "
+            "AND kind='connection_check' AND status IN ('queued','running')",(u["id"],))]
+        if provider not in busy:
+            jobs.enqueue(conn,u["id"],"connection_check",payload={"provider":provider},dedupe_key=f"connection:{provider}:{uuid.uuid4().hex}")
+    return go("/sources#"+provider)
 
 
 @app.get("/logs", response_class=HTMLResponse)
@@ -661,7 +733,8 @@ def logs_page(request: Request):
                              "ORDER BY u.id DESC LIMIT 200", (u["id"],)).fetchall()
         jobs_rows = conn.execute("SELECT * FROM jobs WHERE user_id=? ORDER BY id DESC LIMIT 50", (u["id"],)).fetchall()
         spend = db.month_spend(conn, u["id"])
-    return render(request, "logs.html", errors=errors, usage=usage, jobs=jobs_rows, spend=spend)
+        analytic_calls = conn.execute("SELECT * FROM analytics_calls WHERE user_id=? ORDER BY id DESC LIMIT 100",(u["id"],)).fetchall()
+    return render(request, "logs.html", errors=errors, usage=usage, jobs=jobs_rows, spend=spend,analytic_calls=analytic_calls)
 
 
 @app.exception_handler(HTTPException)

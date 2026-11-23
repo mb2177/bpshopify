@@ -68,18 +68,19 @@ def keyword_metrics(keywords: list[str], market: str) -> dict:
     return result
 
 
-def census_context() -> dict:
+def census_context(user_id=None) -> dict:
     year = datetime.now().year-2
     key = f"census:{year}"
     cached = db.cache_get(key)
     if cached:
         return cached
-    if not config.CENSUS_API_KEY:
+    from . import credentials
+    api_key = credentials.get(user_id,"CENSUS_API_KEY") if user_id is not None else config.CENSUS_API_KEY
+    if not api_key:
         raise SourceNeedsConnection("Нужен бесплатный ключ CENSUS_API_KEY. С мая 2026 Census требует ключ для запросов данных.")
     url = f"https://api.census.gov/data/{year}/acs/acs5"
     params = {"get":"NAME,B01003_001E,B19013_001E","for":"us:*"}
-    if config.CENSUS_API_KEY:
-        params["key"] = config.CENSUS_API_KEY
+    params["key"] = api_key
     response = httpx.get(url,params=params,timeout=15)
     response.raise_for_status()
     rows = response.json()
@@ -92,6 +93,8 @@ def census_context() -> dict:
               "note":"Демографический контекст, без вывода о спросе на конкретный товар."}
     db.cache_put(key,result,86400*30)
     db.source_ok("census")
+    if user_id is not None:
+        db.source_ok(f"analytics:{user_id}:census")
     return result
 
 
@@ -256,7 +259,8 @@ def passport_status(p: dict) -> str:
     return MANUAL
 
 
-def all_passports() -> list[dict]:
+def all_passports(user_id=None) -> list[dict]:
+    from . import credentials
     with db.db() as conn:
         checks = {r["source"]: dict(r) for r in conn.execute("SELECT * FROM source_checks")}
     out = []
@@ -264,6 +268,12 @@ def all_passports() -> list[dict]:
         q = dict(p)
         q["status"] = passport_status(p)
         q["check"] = checks.get(p["id"], {})
+        provider = {"google_trends":"dataforseo","keyword_planner":"dataforseo",
+                    "meta_ad_library":"searchapi","census":"census"}.get(p["id"])
+        if user_id is not None and provider and credentials.ready(user_id,provider):
+            q["status"] = AUTO
+            q["check"] = checks.get(f"analytics:{user_id}:{provider}",{})
+            q["access"] = "Аналитический API " + provider + ", подключение в кабинете"
         check = q["check"]
         if q["status"] == AUTO and not config.FAKE_LLM:
             if check.get("last_error_at") and (check["last_error_at"] > (check.get("last_ok_at") or "")):
@@ -276,6 +286,8 @@ def all_passports() -> list[dict]:
                      fields="Население и медианный доход США, контекст рынка",not_in_mvp=False)
         if p["id"] == "keyword_planner":
             q["howto"] = "Загрузите CSV Keyword Planner на странице идеи. Для API задайте GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_CUSTOMER_ID, GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET и GOOGLE_ADS_REFRESH_TOKEN на сервере."
+        if p["id"]=="google_trends":
+            q["howto"] = "Для автоматического получения рядов Trends сохраните API login и API password DataForSEO выше. CSV остаётся доступен для ручных проверок."
         out.append(q)
     return out
 
