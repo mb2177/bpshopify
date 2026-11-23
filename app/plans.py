@@ -6,8 +6,8 @@ from . import config
 
 def build(report: dict, econ: dict, profile: dict, scoring: dict) -> dict:
     market = scoring.get("market")
-    ready = market in ("USA","UAE")
-    market = market if ready else profile.get("market_priority","USA")
+    ready = market in ("USA","UAE") and scoring.get("verdict")=="test"
+    market = market if market in ("USA","UAE") else profile.get("market_priority","USA")
     if market not in ("USA","UAE"):
         market = "USA"
     base = ((econ.get("markets",{}).get(market,{}) or {}).get("scenarios",{}).get("base") or {})

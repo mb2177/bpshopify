@@ -212,6 +212,14 @@ def test_test_plan_keeps_preparation_and_budget_explicit():
     assert all(step["owner"] and step["stop_criterion"] and step["deadline"] for step in plan["steps"])
 
 
+def test_improve_verdict_keeps_test_plan_in_preparation():
+    from app import plans
+    computed = economics.compute(complete_inputs())
+    plan = plans.build({},computed,{"market_priority":"USA"},{"market":"UAE","verdict":"improve"})
+    assert plan["market"]=="UAE" and plan["phase"]=="preparation"
+    assert plan["earliest_sales_date"] is None
+
+
 def test_memory_reaches_new_research_prompt(monkeypatch):
     user_id = owner()
     with db.db() as conn:
