@@ -73,18 +73,23 @@
     </div>
   {% elif idea.status == 'failed' %}
     <div class="notice n-bad" style="margin-top:16px">{{ idea.stage or 'Ошибка исследования' }}. <a href="/logs">Открыть журнал</a></div>
+  {% elif idea.status == 'needs_input' %}
+    <div class="notice n-info" style="margin-top:16px"><b>Нужен ваш ответ</b><p>{{ idea.stage }}</p><a href="#refine">Ответить и продолжить</a></div>
   {% endif %}
   {% if not is_latest %}<div class="notice n-warn" style="margin-top:16px">Это старая версия. <a href="/ideas/{{ idea.id }}">Открыть актуальную</a></div>{% endif %}
   {% for p_ in report.get('partial') or [] %}<div class="notice n-warn" style="margin-top:16px">{{ p_ }}</div>{% endfor %}
 
   <div class="row" style="margin-top:18px;gap:6px">
+    <a class="btn sm" href="#feedback">Оставить отзыв</a>
+    {% if ver %}<form method="post" action="/ideas/{{ idea.id }}/recalculate"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn ghost sm">Пересчитать данные бесплатно</button></form>{% endif %}
     {% if idea.status not in ('queued','researching') %}
-    <form method="post" action="/ideas/{{ idea.id }}/deep" onsubmit="return confirm('Глубокий разбор на Opus стоит примерно вдвое дороже, ≈ $1–2. Ваши правки экономики сохранятся. Запустить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn primary sm">Глубокий разбор (Opus)</button></form>
-    <form method="post" action="/ideas/{{ idea.id }}/rerun" onsubmit="return confirm('Повторный разбор с поиском на Sonnet, ≈ $0.5–1. Продолжить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm">Обновить разбор</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/deep" onsubmit="return confirm('Глубокий разбор на Opus стоит с отдельным увеличенным лимитом. Ваши правки экономики сохранятся. Запустить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn primary sm">Глубокий разбор (Opus)</button></form>
+    <form method="post" action="/ideas/{{ idea.id }}/rerun" onsubmit="return confirm('Повторный разбор с поиском на Sonnet, Расход ограничен бюджетом из настроек. Продолжить?')"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm">Обновить разбор</button></form>
     {% endif %}
     <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="project"><button class="btn ghost sm">{{ 'Убрать из проектов' if idea.is_project else 'В проекты' }}</button></form>
     <form method="post" action="/ideas/{{ idea.id }}/flag"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="what" value="archive"><button class="btn ghost sm">{{ 'Вернуть из архива' if idea.archived else 'В архив' }}</button></form>
   </div>
+  <p class="small muted">Расходы на эту идею {{ money(research_spend,'USD') }}. Приоритет {{ MARKET_LABEL.get(settings.market_priority,'равное сравнение') }}.{% if last_refresh %} Последняя проверка {{ last_refresh[:16]|replace('T',' ') }} UTC.{% endif %}</p>
 </header>
 
 {% if ver %}
@@ -95,6 +100,7 @@
   <span class="gap"></span>
   <button data-tab="production">Производство</button>
   <button data-tab="data">Данные</button>
+  <button data-tab="plan">План теста</button>
   <button data-tab="history">История</button>
 </div>
 
@@ -125,7 +131,7 @@
     {% else %}
       <p class="one">{{ m.get('summary') or 'По этому рынку данных нет.' }}</p>
       {% if m.get('our_offer') %}<dl class="memo-dl"><dt>Наше предложение</dt><dd>{{ m.our_offer }}</dd></dl>{% endif %}
-      <p class="small muted" style="margin-top:14px">Этот разбор сделан до появления объяснения простыми словами. Нажмите «Обновить разбор», чтобы его получить.</p>
+      <p class="small muted" style="margin-top:14px">Этот разбор сделан до появления объяснения простыми словами. Новый поиск дополнит объяснение после уточнения конкретного товара.</p>
     {% endif %}
   </section>
 
@@ -142,7 +148,7 @@
         <div class="tile" style="grid-column:span 2"><div class="k">Экономика</div><div class="v">не посчитана</div><div class="s">нет данных: {{ (em.get('missing_labels') or [])|join(', ')|lower }}</div></div>
       {% endif %}
       <div class="tile"><div class="k">Пик спроса</div><div class="v">{{ s.get('next_peak_date') or 'нет' }}</div><div class="s">{{ 'сезонный товар' if s.get('is_seasonal') else 'круглый год' }}</div></div>
-      <div class="tile"><div class="k">Данные</div><div class="v">{{ pm.get('data_quality', '—')|capitalize }}</div><div class="s">{{ pm.get('observations', 0) }} подтверждений</div></div>
+      <div class="tile"><div class="k">Качество данных</div><div class="v">{{ pm.get('data_quality', '—')|capitalize }}</div><div class="s">{{ pm.get('demand_observations',0) }} источников спроса · {{ pm.get('price_observations',0) }} цен · {{ pm.get('independent_domains',0) }} независимых сайтов</div></div>
     </div>
   </section>
 
@@ -186,7 +192,7 @@
     {% if d.get('signals') %}
     <details style="margin-top:16px"><summary>Сигналы спроса с источниками ({{ d.signals|length }})</summary>
       <div class="tw" style="margin-top:8px"><table><tr><th>Сигнал</th><th>Значение</th><th>Тип</th><th>Источник</th></tr>
-      {% for sg in d.signals %}<tr><td class="small">{{ sg.get('claim') }}</td><td class="nowrap small">{{ sg.get('value') if sg.get('value') is not none else '—' }} {{ sg.get('unit') or '' }}<div class="faint">{{ sg.get('period') or '' }}</div></td><td>{{ M.type_badge(sg.get('type')) }}</td><td class="small">{{ M.src(sg.get('source_url'), sg.get('source_name')) }}</td></tr>{% endfor %}
+      {% for sg in d.signals %}<tr><td class="small">{{ sg.get('claim') }}{% if sg.get('quote') %}<blockquote>{{ sg.quote }}</blockquote>{% endif %}<div class="faint">{{ {'product':'Конкретный товар','category':'Категория','context':'Контекст рынка'}.get(sg.get('scope'),'Область не проверена') }}</div></td><td class="nowrap small">{{ sg.get('value') if sg.get('value') is not none else '—' }} {{ sg.get('unit') or '' }}<div class="faint">{{ sg.get('period') or '' }}</div></td><td>{{ M.type_badge(sg.get('type')) }}<div class="small muted">{{ 'Источник проверен' if sg.get('verified') else 'Требует проверки' }}</div></td><td class="small">{{ M.src(sg.get('source_url'), sg.get('source_name')) }}{% if sg.get('retrieved_at') %}<div class="faint">{{ sg.retrieved_at[:10] }}</div>{% endif %}</td></tr>{% endfor %}
       </table></div>
     </details>{% endif %}
   </section>
@@ -227,9 +233,10 @@
     {% endif %}
 
     {% if mi and is_latest %}
+    {% if mi.get('startup_unknown') %}<p class="notice n-warn">Разовые расходы этого варианта ещё не подтверждены. Внесите проверенные статьи и суммы в таблицу ниже.</p>{% endif %}
     <details {% if em.get('status') != 'ok' %}open{% endif %} style="margin-top:10px"><summary>Изменить цифры ({{ mi.get('currency') }})</summary>
       <form method="post" action="/ideas/{{ idea.id }}/econ">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="market" value="{{ mk }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="expected_version" value="{{ ver.version }}"><input type="hidden" name="market" value="{{ mk }}">
         <div class="grid g3">
         {% for key, label in FIELD_LABELS.items() %}{% set meta = (mi.get('_meta') or {}).get(key) or {} %}
           <div><label>{{ label }} {% if meta %}{{ M.type_badge(meta.get('type')) }}{% endif %}</label>
@@ -285,6 +292,7 @@
 
   <section class="sec">
     <h2>Рынки рядом</h2>
+    <p class="small muted">Стартовый капитал рассчитан консервативно. Закупка, реклама и расходы месяца оплачиваются до получения выручки.</p>
     <div class="tw"><table>
       <tr><th style="width:160px"></th>{% for mk in MARKETS %}<th>{{ MARKET_LABEL[mk] }}{% if mk == chosen %} ★{% endif %}</th>{% endfor %}</tr>
       <tr><td>Коротко</td>{% for mk in MARKETS %}{% set m = markets.get(mk) or {} %}<td class="small">{{ (m.get('pitch') or {}).get('one_liner') or m.get('summary') or '—' }}</td>{% endfor %}</tr>
@@ -315,6 +323,14 @@
  <div class="surface">
   <section class="sec">
     <h2>Как производить</h2>
+    {% if econ.get('variants') %}
+    <div class="tw"><table><tr><th>Рынок и вариант</th><th>После рекламы за заказ</th><th>Деньги на старт</th><th>Результат</th></tr>
+    {% for mk, options in econ.variants.items() %}{% for key, result in options.items() %}<tr>
+      <td>{{ MARKET_LABEL[mk] }} · {{ {'own':'Своё производство','contractor':'Подрядчик','hybrid':'Гибрид'}.get(key,key) }}{% if econ_inputs.markets[mk].get('production_option')==key %}<div class="small muted">Выбран для расчёта</div>{% endif %}</td>
+      {% if result.status=='ok' %}<td>{{ money(result.scenarios.base.per_order.CM2,result.currency) }}</td><td>{{ money(result.scenarios.base.startup_cash_need,result.currency) }}</td>{% else %}<td colspan="2" class="small">Нужны данные — {{ result.missing_labels|join(', ') }}</td>{% endif %}
+      <td><form method="post" action="/ideas/{{ idea.id }}/production"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="market" value="{{ mk }}"><input type="hidden" name="option" value="{{ key }}"><button class="btn sm">Выбрать</button></form></td>
+    </tr>{% endfor %}{% endfor %}</table></div>
+    {% endif %}
     {% if prod.get('recommended_reason') %}<p class="lead">{{ prod.recommended_reason }}</p>{% endif %}
     {% for o in prod.get('options') or [] %}{% set su = o.get('startup_cost') or {} %}{% set uc = o.get('unit_cost') or {} %}
       <div style="padding:16px 0;border-top:1px solid var(--line);{% if o.get('key') == prod.get('recommended_option') %}border-color:var(--good){% endif %}">
@@ -360,8 +376,10 @@
     {% for e in evidence %}{% set p = e.payload|fromjson %}
       <div class="small" style="margin-bottom:8px"><span class="tag">{{ MARKET_LABEL.get(e.market, e.market) }}</span> <b>{{ e.source }}</b>
         {% if e.kind == 'trends_csv' %} · период {{ e.period }} · получено {{ e.retrieved_at[:10] }}
-          {% for name, st in (p.get('stats') or {}).items() %}<br>«{{ name }}»: последние недели {{ st.last4_avg }}, тренд {{ pct(st.momentum) }}, год к году {{ pct(st.yoy) }}, пик — месяц {{ st.peak_month }}{% if st.low_base %} <span class="tag warn">мало запросов</span>{% endif %}{% endfor %}
-        {% elif e.kind == 'comtrade' %} · {% for s_ in p.get('series') or [] %}{{ s_.year }}: {{ money(s_.import_usd, 'USD', 0) if s_.import_usd is not none else '—' }}{{ '; ' if not loop.last }}{% endfor %}
+          {% for name, st in (p.get('stats') or {}).items() %}<br>«{{ name }}»: последнее окно {{ st.last4_avg }} ({{ st.get('interval','недели') }}), тренд {{ pct(st.momentum) }}, год к году {{ pct(st.yoy) }}, пик — месяц {{ st.peak_month }}{% if st.low_base %} <span class="tag warn">мало запросов</span>{% endif %}{% endfor %}
+        {% elif e.kind == 'comtrade' %} · {% for s_ in p.get('series') or [] %}{{ s_.year }} — {{ money(s_.import_usd, 'USD', 0) if s_.import_usd is not none else '—' }}{{ ', ' if not loop.last }}{% endfor %}
+        {% elif e.kind == 'census' %} · население {{ p.get('population') }} · медианный доход домохозяйства {{ money(p.get('median_household_income_usd'),'USD',0) }} · {{ p.get('period') }} · контекст рынка
+        {% elif e.kind in ('keyword_csv','keyword_metrics') %} · период {{ e.period }} · получено {{ e.retrieved_at[:10] }}<details><summary>Показать исходные показатели</summary><pre>{{ (p.get('rows') or p.get('results'))|tojson(indent=2) }}</pre></details>
         {% else %} · {{ p.get('note') }} {{ p.get('value') or '' }} {{ p.get('unit') or '' }} {% if e.url %}· {{ M.src(e.url) }}{% endif %}{% endif %}
       </div>
     {% else %}<p class="muted small">Пока нет. Google Trends и наблюдения из Keyword Planner, Meta, TikTok добавляются здесь вручную.</p>{% endfor %}
@@ -373,12 +391,19 @@
         <label>Файл multiTimeline.csv</label><input type="file" name="file" accept=".csv,text/csv" required>
         <button class="btn" style="margin-top:10px">Загрузить</button>
       </form>
+      <form method="post" action="/ideas/{{ idea.id }}/keywords" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><h3>Keyword Planner (CSV)</h3>
+        <label>Рынок</label><select name="market">{% for mk in MARKETS %}<option value="{{ mk }}">{{ MARKET_LABEL[mk] }}</option>{% endfor %}</select>
+        <label>Период данных</label><input name="period" required placeholder="Месяцы и год из выгрузки">
+        <label>Выгрузка Keyword Planner</label><input type="file" name="file" accept=".csv,.tsv,text/csv" required>
+        <button class="btn" style="margin-top:10px">Загрузить и пересчитать</button>
+      </form>
       <form method="post" action="/ideas/{{ idea.id }}/evidence">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <h3>Своё наблюдение</h3>
         <div class="row"><select name="source" style="flex:1">{% for s_ in ['Google Ads Keyword Planner','Meta Ad Library','TikTok Creative Center','Amazon.com','Amazon.ae','Noon','Etsy','Котировка подрядчика','UAE.Stat','Другое'] %}<option>{{ s_ }}</option>{% endfor %}</select>
           <select name="market" style="flex:1">{% for mk in MARKETS %}<option value="{{ mk }}">{{ MARKET_LABEL[mk] }}</option>{% endfor %}</select></div>
-        <label>Что увидели</label><input name="note" required placeholder="Например: 1–10 тыс. запросов в месяц">
+        <label>Тип наблюдения</label><select name="scope"><option value="product">Спрос именно на этот товар</option><option value="category">Общая товарная категория</option><option value="context" selected>Контекст рынка</option></select><label>Что увидели</label><input name="note" required placeholder="Например: 1–10 тыс. запросов в месяц">
         <div class="row"><input name="value" placeholder="Значение" style="flex:1"><input name="unit" placeholder="Единица" style="flex:1"><input name="period" placeholder="Период" style="flex:1"></div>
         <label>Ссылка</label><input name="url" placeholder="https://">
         <button class="btn" style="margin-top:10px">Добавить</button>
@@ -392,13 +417,36 @@
       {% for s_ in srcs %}<tr><td>{{ M.src(s_.get('url'), s_.get('title')) }}</td><td class="nowrap small">{{ MARKET_LABEL.get(s_.get('market'), 'оба' if s_.get('market')=='both' else s_.get('market')) }}</td><td class="small">{{ s_.get('used_for') or '' }}</td></tr>{% endfor %}
     </table></div>{% else %}<p class="muted">Нет.</p>{% endif %}
     {% set seen = report.get('seen_sources') or [] %}
-    {% if seen %}<details style="margin-top:10px"><summary>Все просмотренные страницы ({{ seen|length }})</summary><ul class="small">{% for s_ in seen %}<li>{{ M.src(s_.url, s_.title) }}{% if s_.page_age %} <span class="muted">· {{ s_.page_age }}</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
+    {% if seen %}<details style="margin-top:10px"><summary>Ссылки из поиска ({{ seen|length }})</summary><ul class="small">{% for s_ in seen %}<li>{{ M.src(s_.url, s_.title) }}{% if s_.page_age %} <span class="muted">· {{ s_.page_age }}</span>{% endif %}</li>{% endfor %}</ul></details>{% endif %}
     <p class="small muted">Разбор от {{ (report.get('generated_at') or '')[:16]|replace('T',' ') }} UTC, модель {{ report.get('model') or '' }}. {{ M.type_badge('observation') }} видели на странице, {{ M.type_badge('estimate') }} оценка, {{ M.type_badge('assumption') }} допущение.</p>
   </section>
  </div>
 </div>
 
 {# ---------- история ---------- #}
+<div class="panel" id="panel-plan">
+ <div class="surface">
+  <section class="sec">
+    {% set plan = report.get('test_plan') or {} %}
+    <h2>План теста на 30 дней</h2>
+    {% if plan.get('phase')=='preparation' %}<p class="notice n-warn">Сначала подтвердите условия запуска. Отсчёт теста начнётся после подготовки.</p>{% endif %}
+    <p class="small muted">{{ plan.get('assumptions') }}{% if plan.get('earliest_sales_date') %} Предварительная дата продаж {{ plan.earliest_sales_date }}.{% endif %}</p>
+    <p>Лимит потерь на тест {{ money(plan.get('budget_limit_usd'),'USD') }}. <a href="/settings#profile">Изменить в профиле</a></p>
+    {% for step in plan.get('steps') or [] %}{% set state = progress.get(step.key,{}) %}
+    <div style="padding:18px 0;border-top:1px solid var(--line)">
+      <h3>{{ step.action }}</h3><p class="small muted">{{ step.owner }} · {{ step.deadline }} · оценка расходов {{ money(step.estimated_cost,step.currency) }}</p>
+      <p>{{ step.success_criterion }}</p><p class="small">{{ step.stop_criterion }}</p>
+      {% if step.depends_on %}<p class="small muted">После завершения {% for dependency in step.depends_on %}{% for previous in plan.steps if previous.key==dependency %}{{ previous.action }}{% endfor %}{% endfor %}</p>{% endif %}
+      <form method="post" action="/ideas/{{ idea.id }}/plan/{{ step.key }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <div class="grid g3"><div><label>Состояние</label><select name="status">{% for key,label in [('planned','Запланировано'),('active','В работе'),('done','Готово'),('stopped','Остановлено')] %}<option value="{{ key }}" {{ 'selected' if state.get('status','planned')==key }}>{{ label }}</option>{% endfor %}</select></div><div><label>Фактические расходы, USD</label><input name="actual_cost" inputmode="decimal" value="{{ state.actual_cost if state.get('actual_cost') is not none else '' }}"></div></div>
+        <label>Результат и решение</label><textarea name="note" style="min-height:60px">{{ state.get('note','') }}</textarea><button class="btn sm" style="margin-top:8px">Сохранить результат</button>
+      </form>
+    </div>{% else %}<p>План появится после пересчёта сохранённых данных.</p>{% endfor %}
+  </section>
+ </div>
+</div>
+
 <div class="panel" id="panel-history">
  <div class="surface">
   <section class="sec">
@@ -416,6 +464,27 @@
 {% endif %}
 
 {# ---------- уточнить (всегда видно) ---------- #}
+<section class="surface" id="feedback">
+  <h2>Ваше мнение об идее</h2>
+  {% if request.query_params.get('saved')=='feedback' %}<div class="notice n-info">Отзыв сохранён. Выбранные предпочтения будут учтены в следующих идеях.</div>{% endif %}
+  <form method="post" action="/ideas/{{ idea.id }}/feedback">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="version" value="{{ ver.version if ver else 0 }}">
+    <label for="feedback-rating">Оценка предложения</label>
+    <select id="feedback-rating" name="rating" required><option value="revise">Нужно доработать</option><option value="like">Подходит</option><option value="dislike">Не подходит</option></select>
+    <label for="feedback-comment">Что понравилось или что нужно изменить</label>
+    <textarea id="feedback-comment" name="comment" required maxlength="3000" placeholder="Хочется больше круглогодичных товаров для США. Нужна возможность выпускать партии у подрядчика и расти без ручной работы над каждым заказом." style="min-height:110px"></textarea>
+    <label><input type="checkbox" name="remember" checked style="width:auto"> Учитывать эту причину в будущих идеях</label>
+    <label><input type="checkbox" name="revise" style="width:auto"> Также обновить этот разбор в пределах бюджета исследования</label>
+    <div class="row" style="margin-top:12px"><button class="btn primary">Сохранить отзыв</button><span class="small muted">Сохранение отзыва бесплатно. Обновление разбора использует API.</span></div>
+  </form>
+  {% for f in feedback %}<article style="padding:16px 0;border-top:1px solid var(--line);margin-top:16px">
+    <div class="small muted">{{ {'like':'Подходит','revise':'Нужно доработать','dislike':'Не подходит'}.get(f.rating) }} · версия {{ f.version }} · {{ f.created_at[:16]|replace('T',' ') }} UTC</div>
+    <p style="white-space:pre-wrap">{{ f.comment }}</p>
+    <form method="post" action="/feedback/{{ f.id }}/memory"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="remember" value="{{ 0 if f.remember else 1 }}"><button class="btn ghost sm">{{ 'Больше не учитывать в новых идеях' if f.remember else 'Учитывать в новых идеях' }}</button></form>
+  </article>{% endfor %}
+</section>
+
 <section class="surface" id="refine">
   <h2>Уточнить идею</h2>
   <form method="post" action="/ideas/{{ idea.id }}/refine">
@@ -446,3 +515,4 @@ setInterval(function(){fetch("/ideas/{{ idea.id }}/status").then(function(r){ret
 {% endif %}
 </script>
 {% endblock %}
+

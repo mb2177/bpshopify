@@ -206,31 +206,37 @@ def cashflow_90d(u: dict, orders_month: float, fixed: float, one_time: float, ba
         start_day, end_day = mi * 30, (mi + 1) * 30
         active_days = max(0.0, min(end_day, 90) - max(start_day, lead_days))
         sales = round(orders_month * active_days / 30)
+        defect_share = (u["goods_cost"] - u["landed_unit"]) / u["goods_cost"] if u["goods_cost"] else 0
+        units_used = math.ceil(sales / (1 - defect_share)) if sales else 0
         purchase = 0.0
-        if mi == 0 or inventory < sales:
-            need_units = max(batch, sales - inventory) if batch > 0 else sales - inventory
+        if mi == 0 or inventory < units_used:
+            shortage = max(0, units_used - inventory)
+            need_units = math.ceil(shortage / batch) * batch if batch > 0 else shortage
             if mi == 0:
-                need_units = max(batch, sales)
+                need_units = max(batch, need_units)
             purchase = need_units * u["landed_unit"]
             inventory += need_units
             bought_units += need_units
-        defect_share = (u["goods_cost"] - u["landed_unit"]) / u["goods_cost"] if u["goods_cost"] else 0
-        units_used = math.ceil(sales / (1 - defect_share)) if sales else 0
-        units_used = min(units_used, inventory)
         inventory -= units_used
         cash_in = sales * u["R"]
         var_ex_goods = u["V"] - u["goods_cost"]
-        cash_out = purchase + sales * var_ex_goods + sales * u["CAC"] + fixed
+        before_receipts = purchase + sales * var_ex_goods + sales * u["CAC"] + fixed
+        peak_need = max(peak_need, -(cash - before_receipts))
+        cash_out = before_receipts
         cash += cash_in - cash_out
         peak_need = max(peak_need, -cash)
         months.append({"month": mi + 1, "sales": sales, "purchase": purchase, "cash_in": cash_in,
                        "cash_out": cash_out, "cumulative": cash, "inventory_left": inventory})
     return {"months": months, "end_cash": cash, "peak_cash_need": max(peak_need, 0.0),
+            "timing_assumption": "Закупка, реклама и расходы месяца оплачены до получения выручки. Уточните отсрочки платежей для своего бизнеса.",
             "unsold_units": inventory, "unsold_value": inventory * u["landed_unit"], "bought_units": bought_units}
 
 
 def missing_fields(m: dict) -> list[str]:
-    return [f for f in REQUIRED if m.get(f) in (None, "")]
+    missing = [f for f in REQUIRED if m.get(f) in (None, "")]
+    if m.get("startup_unknown"):
+        missing.append("startup_costs")
+    return missing
 
 
 def compute(inputs: dict) -> dict:
@@ -241,10 +247,23 @@ def compute(inputs: dict) -> dict:
     mod = inputs["scenario_mod"]
     out = {"base_currency": base_cur, "fx": inputs.get("fx"), "markets": {}}
     for mk, m in inputs["markets"].items():
+        invalid = []
+        for field,value in m.items():
+            if field not in FIELD_LABELS or field in ("unit_cost_currency","price_includes_vat") or value in (None,""):
+                continue
+            try:
+                number = float(value)
+                if not math.isfinite(number) or number < 0 or (field in PCT_FIELDS and number > 100) or (field=="defect_pct" and number>=100):
+                    invalid.append(FIELD_LABELS[field])
+            except (TypeError,ValueError):
+                invalid.append(FIELD_LABELS[field])
+        if invalid:
+            out["markets"][mk] = {"status":"insufficient","missing":[],"missing_labels":["Некорректное значение — "+v for v in invalid]}
+            continue
         miss = missing_fields(m)
         if miss:
             out["markets"][mk] = {"status": "insufficient", "missing": miss,
-                                  "missing_labels": [FIELD_LABELS[f] for f in miss]}
+                                  "missing_labels": [FIELD_LABELS.get(f,"Разовые расходы выбранного производства") for f in miss]}
             continue
         res = {"status": "ok", "currency": m["currency"], "scenarios": {}}
         for sc in SCENARIOS:
@@ -264,6 +283,13 @@ def compute(inputs: dict) -> dict:
                          "проблему не решит — нужен дешевле канал, выше чек или ниже затраты.")
         res["notes"] = notes
         out["markets"][mk] = res
+    variants = {}
+    for mk,options in inputs.get("variants",{}).items():
+        variants[mk] = {}
+        for key,market in options.items():
+            result = compute({**inputs,"variants":{},"markets":{mk:market}})
+            variants[mk][key] = result["markets"][mk]
+    out["variants"] = variants
     return out
 
 
@@ -284,6 +310,8 @@ def apply_changes(inputs: dict, market: str | None, changes: dict) -> tuple[dict
                 v = str(v).upper()
             elif v not in (None, ""):
                 v = float(v)
+                if not math.isfinite(v) or v < 0 or (k in PCT_FIELDS and v>100) or (k=="defect_pct" and v>=100):
+                    raise ValueError(f"Проверьте значение — {FIELD_LABELS[k]}")
             else:
                 v = None
             if old != v:
@@ -291,3 +319,4 @@ def apply_changes(inputs: dict, market: str | None, changes: dict) -> tuple[dict
                 m.setdefault("_meta", {})[k] = {"type": "assumption", "source": "Задано владельцем"}
                 log.append(f"{config.MARKET_LABEL[mk]}: {FIELD_LABELS[k]} {old} → {v}")
     return new, log
+

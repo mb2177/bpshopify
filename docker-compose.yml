@@ -12,6 +12,7 @@ services:
     env_file: .env
     volumes: ["./data:/app/data"]
     restart: unless-stopped
+    stop_grace_period: 12m
 
   bot:
     build: .
@@ -33,3 +34,4 @@ services:
 
 volumes:
   caddy_data:
+

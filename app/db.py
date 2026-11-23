@@ -168,6 +168,40 @@ CREATE TABLE IF NOT EXISTS daily_runs (
     created_at TEXT NOT NULL,
     UNIQUE(user_id, run_date)
 );
+CREATE TABLE IF NOT EXISTS idea_feedback (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    idea_id INTEGER NOT NULL REFERENCES ideas(id),
+    version INTEGER NOT NULL,
+    rating TEXT NOT NULL,
+    comment TEXT NOT NULL,
+    remember INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feedback_owner ON idea_feedback(user_id, id);
+CREATE TABLE IF NOT EXISTS project_progress (
+    idea_id INTEGER NOT NULL REFERENCES ideas(id),
+    step_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    note TEXT NOT NULL DEFAULT '',
+    actual_cost REAL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(idea_id,step_key)
+);
+CREATE TABLE IF NOT EXISTS source_cache (
+    cache_key TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS budget_reservations (
+    reservation_key TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    job_id INTEGER,
+    budget_group INTEGER,
+    amount REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -207,6 +241,20 @@ def tx(conn: sqlite3.Connection):
 def init_db() -> None:
     with db() as conn:
         conn.executescript(SCHEMA)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+        if "budget_group" not in columns:
+            try:
+                conn.execute("ALTER TABLE jobs ADD COLUMN budget_group INTEGER")
+            except sqlite3.OperationalError:
+                if "budget_group" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}:
+                    raise
+        usage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(usage)")}
+        if "step" not in usage_columns:
+            try:
+                conn.execute("ALTER TABLE usage ADD COLUMN step TEXT")
+            except sqlite3.OperationalError:
+                if "step" not in {row["name"] for row in conn.execute("PRAGMA table_info(usage)")}:
+                    raise
 
 
 def jdump(obj) -> str:
@@ -256,6 +304,11 @@ DEFAULT_SETTINGS = {
     "monthly_budget_usd": 50.0,      # лимит расходов на модель/поиск в месяц
     "per_idea_budget_usd": 1.5,      # лимит на одно исследование
     "base_currency": "USD",
+    "market_priority": "USA",
+    "evergreen_first": True,
+    "research_mode": "standard",
+    "refresh_enabled": True,
+    "refresh_days": 7,
 }
 
 PROFILE_FIELDS = [
@@ -315,6 +368,56 @@ def job_spend(conn, job_id: int) -> float:
     return float(row["s"])
 
 
+def group_spend(conn, group_id: int) -> float:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(u.cost_usd),0) s FROM usage u LEFT JOIN jobs j ON j.id=u.job_id "
+        "WHERE u.job_id=? OR j.budget_group=?", (group_id, group_id)).fetchone()
+    return float(row["s"])
+
+
+def feedback(conn, user_id: int, idea_id: int | None = None, remembered=False):
+    sql = "SELECT f.*, i.title FROM idea_feedback f JOIN ideas i ON i.id=f.idea_id WHERE f.user_id=?"
+    args = [user_id]
+    if idea_id is not None:
+        sql += " AND f.idea_id=?"
+        args.append(idea_id)
+    if remembered:
+        sql += " AND f.remember=1"
+    return conn.execute(sql + " ORDER BY f.id DESC LIMIT 30", args).fetchall()
+
+
+def save_feedback(conn, user_id: int, idea_id: int, rating: str, comment: str, remember=True, version=None):
+    idea = get_idea(conn, idea_id, user_id)
+    if not idea or rating not in ("like", "revise", "dislike") or not comment.strip():
+        raise ValueError("Выберите оценку и напишите причину")
+    version = idea["current_version"] if version is None else version
+    if version and not conn.execute("SELECT 1 FROM idea_versions WHERE idea_id=? AND version=?",(idea_id,version)).fetchone():
+        raise ValueError("Версия разбора не найдена")
+    with tx(conn):
+        previous = conn.execute("SELECT id FROM idea_feedback WHERE user_id=? AND idea_id=? AND version=? AND rating=? AND comment=?",
+                                (user_id,idea_id,version,rating,comment.strip()[:3000])).fetchone()
+        if previous:
+            return previous["id"]
+        cursor = conn.execute(
+            "INSERT INTO idea_feedback(user_id,idea_id,version,rating,comment,remember,created_at) VALUES(?,?,?,?,?,?,?)",
+            (user_id, idea_id, version, rating, comment.strip()[:3000], int(remember), now_iso()))
+        return cursor.lastrowid
+
+
+def cache_get(key: str):
+    with db() as conn:
+        row = conn.execute("SELECT payload FROM source_cache WHERE cache_key=? AND expires_at>?", (key, ts())).fetchone()
+    return jload(row["payload"]) if row else None
+
+
+def cache_put(key: str, payload, ttl: float):
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO source_cache(cache_key,payload,expires_at,updated_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,expires_at=excluded.expires_at,updated_at=excluded.updated_at",
+            (key, jdump(payload), ts() + ttl, now_iso()))
+
+
 # ---------- идеи ----------
 
 def get_idea(conn, idea_id: int, user_id: int):
@@ -358,11 +461,12 @@ def save_version(conn, idea_id: int, report: dict, econ_inputs: dict, econ_resul
     return v
 
 
-def add_usage(conn, user_id, job_id, provider, model, in_tok, out_tok, searches, cost) -> None:
+def add_usage(conn, user_id, job_id, provider, model, in_tok, out_tok, searches, cost, step=None) -> None:
     conn.execute(
-        "INSERT INTO usage(user_id,job_id,provider,model,input_tokens,output_tokens,searches,cost_usd,created_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?)", (user_id, job_id, provider, model, in_tok, out_tok, searches, cost, now_iso()))
+        "INSERT INTO usage(user_id,job_id,provider,model,input_tokens,output_tokens,searches,cost_usd,created_at,step) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)", (user_id, job_id, provider, model, in_tok, out_tok, searches, cost, now_iso(),step))
 
 
 def ts() -> float:
     return time.time()
+

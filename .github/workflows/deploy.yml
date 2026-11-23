@@ -58,9 +58,14 @@ jobs:
             set -e
             cd /opt/shopify-bot
             umask 077
-            : > .env
+            touch .env
             for v in SITE_URL SITE_ADDRESS ADMIN_EMAIL ADMIN_PASSWORD SECRET_KEY TELEGRAM_BOT_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY; do
-              printf '%s=%s\n' "$v" "${!v}" >> .env
+              if [ -n "${!v}" ]; then
+                sed -i "/^${v}=/d" .env
+                printf '%s=%s\n' "$v" "${!v}" >> .env
+              fi
             done
+            sed -i '/^FAKE_LLM=/d' .env
             echo "FAKE_LLM=0" >> .env
             bash deploy/server.sh
+

@@ -3,9 +3,14 @@
 Балл — это взвешенная сумма компонентов, а НЕ вероятность успеха. Невыполнимое обязательное условие
 ограничивает балл сверху: красивая сумма не может скрыть стоп-фактор.
 """
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
+import math
 
 from . import config, economics
+from .sources import canonical_url
+from urllib.parse import urlsplit
+import re
 
 WEIGHTS = {"demand": 0.25, "intent": 0.15, "competition": 0.15, "economics": 0.30, "feasibility": 0.15}
 COMPONENT_LABEL = {
@@ -22,11 +27,13 @@ VERDICTS = {
 RULES_TEXT = [
     "Компоненты 0–10: спрос 25%, намерение 15%, конкуренция 15%, экономика 30%, выполнимость 15%.",
     "Экономика считается кодом: маржинальность после рекламы базового сценария; 35% и выше = 10 баллов, 0% и ниже = 0.",
-    "Спрос без ни одного наблюдения с источником ограничен 4 баллами.",
+    "Учитываются проверенные ссылки без дублей. Спрос на товар оценивается отдельно от цен конкурентов и общей статистики.",
     "Жёсткий стоп (платежи или законность заблокированы, CM1 ≤ 0, пропущен сезон) — балл не выше 3, вердикт «отклонить».",
     "Мягкий стоп (не хватает бюджета или часов, CM2 ≤ 0 при положительном CM1) — балл не выше 4.5, вердикт «доработать».",
     "Мало проверяемых данных (меньше 3 наблюдений с источником) — балл не выше 6, вердикт «недостаточно данных».",
     "Без обязательных входов экономики (цена, себестоимость, CAC, объём) — вердикт «недостаточно данных».",
+    "Неизвестные платежи, условия запуска, бюджет или часы блокируют рекомендацию теста. Статус риска требует доработки.",
+    "При сопоставимых оценках с разницей до 0.5 балла учитывается выбранный владельцем приоритет рынка.",
     "Иначе: ≥7 — тестировать, ≥5 — доработать, ≥3.5 — наблюдать, ниже — отклонить.",
     "Рынок выбирается кодом: лучший балл среди рынков, прошедших обязательные условия.",
 ]
@@ -38,20 +45,50 @@ def _clamp(x, lo=0.0, hi=10.0):
 
 def _f(v):
     try:
-        return float(v)
+        number = float(v)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
 
-def count_observations(mreport: dict) -> int:
-    n = 0
+def fresh_observation(value: dict, max_days=90) -> bool:
+    retrieved = value.get("retrieved_at")
+    if not retrieved:
+        return False
+    try:
+        observed = datetime.fromisoformat(str(retrieved)[:10]).date()
+    except ValueError:
+        return False
+    today = datetime.now(timezone.utc).date()
+    if not 0 <= (today-observed).days <= max_days:
+        return False
+    years = [int(year) for year in re.findall(r"\b20\d{2}\b",str(value.get("period") or ""))]
+    return not years or max(years) >= today.year-2
+
+
+def evidence_quality(mreport: dict) -> dict:
+    urls = set()
+    demand = set()
+    prices = set()
     for s in (mreport.get("demand", {}) or {}).get("signals", []) or []:
-        if s.get("type") == "observation" and s.get("source_url"):
-            n += 1
+        url = canonical_url(s.get("source_url"))
+        if s.get("type") == "observation" and s.get("verified") and url and fresh_observation(s):
+            urls.add(url)
+            if s.get("scope") == "product":
+                demand.add(url)
     for c in mreport.get("competitors", []) or []:
-        if c.get("url") and c.get("price") not in (None, ""):
-            n += 1
-    return n
+        url = canonical_url(c.get("url"))
+        if c.get("verified") and url and c.get("price") not in (None, "") and fresh_observation(c,30):
+            urls.add(url)
+            prices.add(url)
+    domains = {urlsplit(url).hostname for url in urls}
+    quality = "высокое" if len(domains)>=3 and len(demand)>=2 and len(prices)>=2 else "среднее" if demand and len(urls)>=3 else "низкое"
+    return {"observations":len(urls),"demand_observations":len(demand),"price_observations":len(prices),
+            "independent_domains":len(domains),"data_quality":quality}
+
+
+def count_observations(mreport: dict) -> int:
+    return evidence_quality(mreport)["observations"]
 
 
 def days_until(dstr: str | None, today: date | None = None):
@@ -72,12 +109,36 @@ def market_gates(mk: str, mreport: dict, econ_m: dict, profile: dict) -> list[di
                        ("fulfilment", "Выполнение заказов"), ("product_requirements", "Требования к товару и права на дизайн")):
         g = lf.get(key) or {}
         st = g.get("status", "unknown")
-        status = {"ok": "ok", "risk": "ok", "blocked": "fail_hard"}.get(st, "unknown")
+        if st=="ok" and mreport.get("provenance_checked") and not g.get("verified"):
+            st = "unknown"
+            g = {**g,"note":(g.get("note") or "") + " Источник этого условия ещё не подтверждён."}
+        status = {"ok": "ok", "risk": "fail_soft", "blocked": "fail_hard"}.get(st, "unknown")
         gates.append({"key": key, "label": label, "status": status, "note": g.get("note", "нет данных")})
 
+    quality = evidence_quality(mreport)
+    gates.append({"key":"demand","label":"Подтверждение спроса на товар",
+                  "status":"ok" if quality["demand_observations"] else "unknown",
+                  "note":f"Проверенных источников спроса на конкретный товар — {quality['demand_observations']}"})
+    season = mreport.get("seasonality") or {}
+    if season.get("is_seasonal"):
+        du = days_until(season.get("next_peak_date"),datetime.now(ZoneInfo(config.MARKET_TZ[mk])).date())
+        hints = mreport.get("economics_hints") or {}
+        lead = _f(hints.get("lead_time_days"))
+        if econ_m.get("status") == "ok":
+            lead = econ_m["scenarios"]["base"]["lead_days"]
+        if du is not None and du < 14:
+            status = "fail_hard"
+        elif du is None or lead is None:
+            status = "unknown"
+        else:
+            status = "ok" if du >= lead+14 else "fail_hard"
+        gates.append({"key":"season","label":"Успеваем к сезону","status":status,
+                      "note":f"До пика {du if du is not None else 'неизвестно'} дней; подготовка {lead if lead is not None else 'не подтверждена'} дней + 14 дней запаса"})
     if econ_m.get("status") != "ok":
         gates.append({"key": "economics", "label": "Экономика", "status": "unknown",
                       "note": "Не хватает входов: " + ", ".join(econ_m.get("missing_labels", []))})
+        for key,label in (("budget","Бюджет старта"),("hours","Рабочее время")):
+            gates.append({"key":key,"label":label,"status":"unknown","note":"Нужна полная экономика для проверки"})
         return gates
     base = econ_m["scenarios"]["base"]
     u = base["per_order"]
@@ -111,16 +172,8 @@ def market_gates(mk: str, mreport: dict, econ_m: dict, profile: dict) -> list[di
         gates.append({"key": "hours", "label": "Рабочее время",
                       "status": "ok" if need_h <= avail else "fail_soft",
                       "note": f"Нужно ≈ {need_h:.0f} ч/мес на заказы, доступно ≈ {avail:.0f} ч/мес"})
-
-    season = mreport.get("seasonality", {}) or {}
-    if season.get("is_seasonal"):
-        du = days_until(season.get("next_peak_date"))
-        lead = base["lead_days"]
-        if du is not None:
-            ok = du >= lead + 14
-            gates.append({"key": "season", "label": "Успеваем к сезону",
-                          "status": "ok" if ok else "fail_hard",
-                          "note": f"До пика {du} дн. ({season.get('next_peak_date')}), до продаж нужно ≈ {lead:.0f} дн. + 14 дн. запаса"})
+    else:
+        gates.append({"key":"hours","label":"Рабочее время","status":"unknown","note":"Часы владельца не указаны"})
     return gates
 
 
@@ -156,15 +209,20 @@ def score_market(mk: str, mreport: dict, econ_m: dict, profile: dict) -> dict:
         score = min(score, 3.0); caps.append("жёсткий стоп")
     elif soft:
         score = min(score, 4.5); caps.append("мягкий стоп")
-    quality = "высокое" if obs >= 6 else "среднее" if obs >= 3 else "низкое"
+    quality = evidence_quality(mreport)
     if obs < 3:
         score = min(score, 6.0); caps.append("мало данных")
     if econ_score is None:
         score = min(score, 5.0); caps.append("нет экономики")
+    if unknown:
+        score = min(score, 5.0)
+        caps.append("обязательные условия не подтверждены")
 
     if hard:
         verdict = "reject"
     elif econ_score is None:
+        verdict = "insufficient"
+    elif unknown:
         verdict = "insufficient"
     elif soft:
         verdict = "improve"
@@ -179,7 +237,7 @@ def score_market(mk: str, mreport: dict, econ_m: dict, profile: dict) -> dict:
     else:
         verdict = "reject"
     return {"market": mk, "raw": round(raw, 2), "score": round(score, 1), "components": comps,
-            "gates": gates, "caps": caps, "verdict": verdict, "observations": obs, "data_quality": quality,
+            "gates": gates, "caps": caps, "verdict": verdict, **quality,
             "unknown_gates": [g["label"] for g in unknown]}
 
 
@@ -188,14 +246,21 @@ def evaluate(report: dict, econ: dict, profile: dict) -> dict:
     for mk in config.MARKETS:
         mrep = (report.get("markets") or {}).get(mk) or {}
         per[mk] = score_market(mk, mrep, econ["markets"].get(mk, {"status": "insufficient", "missing_labels": []}), profile)
-    passing = [s for s in per.values() if not any(g["status"].startswith("fail") for g in s["gates"])]
+    passing = [s for s in per.values() if s["verdict"] not in ("insufficient","reject") and
+               not any(g["status"] in ("fail_hard","unknown") for g in s["gates"])]
     pool = passing or list(per.values())
     best = max(pool, key=lambda s: s["score"])
+    priority = profile.get("market_priority","USA")
+    preferred = per.get(priority)
+    if preferred in passing and best["score"]-preferred["score"] <= 0.5:
+        best = preferred
     chosen = best["market"] if passing else "none"
     if best["verdict"] in ("insufficient", "reject"):
         chosen = "none"  # без достаточных данных или при отклонении рынок не рекомендуем
     llm_choice = report.get("recommended_market")
     note = None
+    if chosen in config.MARKETS:
+        note = f"Приоритет владельца — {config.MARKET_LABEL.get(priority,'равное сравнение')}. Выбраны подтверждённые условия, экономика и оценка обоих рынков."
     if llm_choice in config.MARKETS and chosen in config.MARKETS and llm_choice != chosen:
         note = (f"Исследование предлагало {config.MARKET_LABEL[llm_choice]}, но по расчёту и обязательным "
                 f"условиям выше {config.MARKET_LABEL[chosen]}.")
@@ -205,3 +270,4 @@ def evaluate(report: dict, econ: dict, profile: dict) -> dict:
         "rules": RULES_TEXT, "weights": WEIGHTS, "labels": COMPONENT_LABEL, "market_note": note,
         "is_probability": False,
     }
+

@@ -8,6 +8,10 @@ class Cancelled(Exception):
     pass
 
 
+class RestartRequested(Exception):
+    pass
+
+
 def enqueue(conn, user_id: int, kind: str, idea_id: int | None = None, payload: dict | None = None,
             dedupe_key: str | None = None, max_attempts: int = 3) -> int | None:
     """Ставит задачу. Если задача с таким dedupe_key уже есть — возвращает её id, не создавая дубль."""
@@ -17,8 +21,9 @@ def enqueue(conn, user_id: int, kind: str, idea_id: int | None = None, payload: 
             return row["id"]
     try:
         cur = conn.execute(
-            "INSERT INTO jobs(user_id,idea_id,kind,payload,dedupe_key,max_attempts,created_at) VALUES(?,?,?,?,?,?,?)",
-            (user_id, idea_id, kind, db.jdump(payload or {}), dedupe_key, max_attempts, db.now_iso()))
+            "INSERT INTO jobs(user_id,idea_id,kind,payload,dedupe_key,max_attempts,created_at,budget_group) VALUES(?,?,?,?,?,?,?,?)",
+            (user_id, idea_id, kind, db.jdump(payload or {}), dedupe_key, max_attempts, db.now_iso(),
+             (payload or {}).get("budget_group")))
         return cur.lastrowid
     except sqlite3.IntegrityError:
         row = conn.execute("SELECT id FROM jobs WHERE dedupe_key=?", (dedupe_key,)).fetchone()
@@ -71,6 +76,7 @@ def check_cancel(job_id: int | None) -> None:
 def recover_stale(conn) -> int:
     """После перезапуска воркера: зависшие running возвращаются в очередь (шаги берутся из кеша)."""
     cur = conn.execute("UPDATE jobs SET status='queued' WHERE status='running'")
+    conn.execute("DELETE FROM budget_reservations WHERE job_id IN (SELECT id FROM jobs WHERE status!='running')")
     return cur.rowcount
 
 
@@ -94,3 +100,4 @@ def active_jobs(conn, user_id: int):
     return conn.execute(
         "SELECT j.*, i.title FROM jobs j LEFT JOIN ideas i ON i.id=j.idea_id "
         "WHERE j.user_id=? AND j.status IN ('queued','running') ORDER BY j.id", (user_id,)).fetchall()
+

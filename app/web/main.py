@@ -2,6 +2,7 @@
 import re
 import time
 import uuid
+import math
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -48,7 +49,7 @@ def pct(v, digits=1):
 
 TYPE_LABEL = {"observation": "наблюдение", "estimate": "оценка", "assumption": "допущение"}
 STATUS_LABEL = {"queued": "в очереди", "researching": "исследуется", "ready": "готово", "partial": "частично готово",
-                "failed": "ошибка", "cancelled": "остановлено", "new": "новая"}
+                "failed": "ошибка", "cancelled": "остановлено", "new": "новая", "needs_input":"нужен ваш ответ"}
 GATE_ICON = {"ok": "✅", "fail_hard": "⛔", "fail_soft": "⚠️", "unknown": "❔"}
 FEAS = {"ok": "✅ ok", "risk": "⚠️ риск", "blocked": "⛔ блок", "unknown": "❔ нет данных"}
 
@@ -233,7 +234,16 @@ def idea_page(request: Request, idea_id: int, v: int | None = None):
     u = need_user(request)
     idea, ver, versions, evidence, qa, job = _load_idea(u, idea_id, v)
     report = db.jload(ver["report"], {}) if ver else {}
+    with db.db() as conn:
+        feedback = db.feedback(conn,u["id"],idea_id)
+        progress = {r["step_key"]:dict(r) for r in conn.execute("SELECT * FROM project_progress WHERE idea_id=?",(idea_id,))}
+        spend = conn.execute("SELECT COALESCE(SUM(u.cost_usd),0) n FROM usage u JOIN jobs j ON j.id=u.job_id WHERE j.idea_id=? AND u.user_id=?",
+                             (idea_id,u["id"])).fetchone()["n"]
+        settings = db.get_settings(conn,u["id"])
+        refreshed = conn.execute("SELECT last_ok_at FROM source_checks WHERE source=?",(f"idea:{idea_id}:refresh",)).fetchone()
     return render(request, "idea.html", idea=idea, ver=ver, versions=versions, evidence=evidence, qa=qa, job=job,
+                  feedback=feedback,progress=progress,research_spend=spend,settings=settings,
+                  last_refresh=refreshed["last_ok_at"] if refreshed else None,
                   report=report, mrep=report.get("market") or {}, prod=report.get("production") or {},
                   econ_inputs=db.jload(ver["econ_inputs"], {}) if ver else {},
                   econ=db.jload(ver["econ_results"], {}) if ver else {},
@@ -289,7 +299,11 @@ async def idea_econ(request: Request, idea_id: int):
                 except ValueError:
                     continue
             items[key] = lst
-    research.recalc_from_form(u["id"], idea_id, market, changes, items)
+    try:
+        expected_version = int(form["expected_version"]) if form.get("expected_version") else None
+        research.recalc_from_form(u["id"], idea_id, market, changes, items,expected_version)
+    except ValueError as exc:
+        return go(f"/ideas/{idea_id}?err={str(exc)[:100]}#{market.lower()}")
     return go(f"/ideas/{idea_id}#{market.lower()}")
 
 
@@ -315,7 +329,7 @@ def idea_rerun(request: Request, idea_id: int, csrf_token: str = Form(...)):
             raise HTTPException(404)
         busy = conn.execute("SELECT 1 FROM jobs WHERE idea_id=? AND status IN ('queued','running')", (idea_id,)).fetchone()
         if not busy:
-            jobs.enqueue(conn, u["id"], "research", idea_id, dedupe_key=f"research:{idea_id}:{int(time.time())}")
+            jobs.enqueue(conn, u["id"], "research", idea_id,{"force_fresh":True},dedupe_key=f"research:{idea_id}:{int(time.time())}")
             db.set_idea(conn, idea_id, status="queued", stage="Полный повторный разбор в очереди")
     return go(f"/ideas/{idea_id}")
 
@@ -372,7 +386,13 @@ async def idea_trends(request: Request, idea_id: int, market: str = Form(...), c
         if not db.get_idea(conn, idea_id, u["id"]):
             raise HTTPException(404)
     try:
-        parsed = sources.parse_trends_csv(await file.read())
+        content = await file.read()
+        if len(content)>500000:
+            raise ValueError("Файл должен быть меньше 500 КБ")
+        parsed = sources.parse_trends_csv(content)
+        names = " ".join(parsed.get("series",[])).lower()
+        if (market=="USA" and "united arab emirates" in names) or (market=="UAE" and "united states" in names):
+            raise ValueError("Рынок не совпадает со страной в выгрузке")
     except ValueError as e:
         return go(f"/ideas/{idea_id}?err={str(e)[:120]}#evidence")
     with db.db() as conn:
@@ -380,13 +400,15 @@ async def idea_trends(request: Request, idea_id: int, market: str = Form(...), c
                      (idea_id, "trends_csv", "Google Trends (CSV, ручной импорт)", market, "https://trends.google.com/",
                       db.jdump(parsed), parsed["period"], db.now_iso()))
     db.source_ok("google_trends")
-    return go(f"/ideas/{idea_id}#evidence")
+    with db.db() as conn:
+        jobs.enqueue(conn,u["id"],"recalculate",idea_id,dedupe_key=f"evidence-recalc:{idea_id}:{uuid.uuid4().hex}")
+    return go(f"/ideas/{idea_id}#data")
 
 
 @app.post("/ideas/{idea_id}/evidence")
 def idea_evidence(request: Request, idea_id: int, source: str = Form(...), market: str = Form(...),
                   url: str = Form(""), note: str = Form(...), value: str = Form(""), unit: str = Form(""),
-                  period: str = Form(""), csrf_token: str = Form(...)):
+                  period: str = Form(""), scope: str = Form("context"), csrf_token: str = Form(...)):
     u = need_user(request)
     csrf(request, csrf_token)
     if market not in config.MARKETS:
@@ -396,8 +418,123 @@ def idea_evidence(request: Request, idea_id: int, source: str = Form(...), marke
             raise HTTPException(404)
         conn.execute("INSERT INTO evidence(idea_id,kind,source,market,url,payload,period,retrieved_at) VALUES(?,?,?,?,?,?,?,?)",
                      (idea_id, "manual", source, market, url.strip() or None,
-                      db.jdump({"note": note, "value": value, "unit": unit}), period or None, db.now_iso()))
-    return go(f"/ideas/{idea_id}#evidence")
+                      db.jdump({"note": note, "value": value, "unit": unit,"scope":scope if scope in ("product","category","context") else "context"}), period or None, db.now_iso()))
+        jobs.enqueue(conn,u["id"],"recalculate",idea_id,dedupe_key=f"evidence-recalc:{idea_id}:{uuid.uuid4().hex}")
+    return go(f"/ideas/{idea_id}#data")
+
+
+@app.post("/ideas/{idea_id}/keywords")
+async def idea_keywords(request: Request,idea_id: int,market: str = Form(...),period: str = Form(...),
+                        csrf_token: str = Form(...),file: UploadFile = File(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    if market not in config.MARKETS:
+        raise HTTPException(400)
+    with db.db() as conn:
+        if not db.get_idea(conn,idea_id,u["id"]):
+            raise HTTPException(404)
+    data = await file.read()
+    if len(data)>500000:
+        raise HTTPException(400,"Файл должен быть меньше 500 КБ")
+    try:
+        parsed = sources.parse_keyword_csv(data)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
+    with db.db() as conn:
+        conn.execute("INSERT INTO evidence(idea_id,kind,source,market,url,payload,period,retrieved_at) VALUES(?,?,?,?,?,?,?,?)",
+            (idea_id,"keyword_csv","Google Ads Keyword Planner",market,"https://ads.google.com/home/tools/keyword-planner/",db.jdump(parsed),period,db.now_iso()))
+        jobs.enqueue(conn,u["id"],"recalculate",idea_id,dedupe_key=f"keyword-recalc:{idea_id}:{uuid.uuid4().hex}")
+    db.source_ok("keyword_planner")
+    return go(f"/ideas/{idea_id}#data")
+
+
+@app.post("/ideas/{idea_id}/feedback")
+def idea_feedback(request: Request,idea_id: int,rating: str = Form(...),comment: str = Form(...),
+                  remember: str = Form(""),revise: str = Form(""),version: int | None = Form(None),csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    with db.db() as conn:
+        if not db.get_idea(conn,idea_id,u["id"]):
+            raise HTTPException(404)
+        try:
+            feedback_id = db.save_feedback(conn,u["id"],idea_id,rating,comment,remember=="on",version)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc))
+        if revise=="on":
+            jobs.enqueue(conn,u["id"],"refine",idea_id,{"text":comment},dedupe_key=f"feedback-refine:{feedback_id}")
+    return go(f"/ideas/{idea_id}?saved=feedback#feedback")
+
+
+@app.post("/feedback/{feedback_id}/memory")
+def feedback_memory(request: Request,feedback_id: int,remember: int = Form(...),csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    with db.db() as conn:
+        row = conn.execute("SELECT idea_id FROM idea_feedback WHERE id=? AND user_id=?",(feedback_id,u["id"])).fetchone()
+        if not row:
+            raise HTTPException(404)
+        conn.execute("UPDATE idea_feedback SET remember=? WHERE id=?",(int(bool(remember)),feedback_id))
+    return go(f"/ideas/{row['idea_id']}#feedback")
+
+
+@app.post("/ideas/{idea_id}/recalculate")
+def idea_recalculate(request: Request,idea_id: int,csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    with db.db() as conn:
+        if not db.get_idea(conn,idea_id,u["id"]):
+            raise HTTPException(404)
+        jobs.enqueue(conn,u["id"],"recalculate",idea_id,dedupe_key=f"manual-recalc:{idea_id}:{uuid.uuid4().hex}")
+        db.set_idea(conn,idea_id,status="queued",stage="Пересчитываю сохранённые данные без платного поиска")
+    return go(f"/ideas/{idea_id}")
+
+
+@app.post("/ideas/{idea_id}/production")
+def idea_production(request: Request,idea_id: int,market: str = Form(...),option: str = Form(...),csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    with db.db() as conn:
+        if not db.get_idea(conn,idea_id,u["id"]):
+            raise HTTPException(404)
+        version = db.latest_version(conn,idea_id)
+        if not version or market not in config.MARKETS:
+            raise HTTPException(400)
+        inputs = db.jload(version["econ_inputs"],{})
+        variant = inputs.get("variants",{}).get(market,{}).get(option)
+        if not variant:
+            raise HTTPException(400,"Вариант ещё не рассчитан")
+        inputs["markets"][market] = {**variant,"production_option":option}
+        inputs["markets"][market].setdefault("_meta",{})["production_option"] = {"type":"assumption","source":research.OWNER_SET}
+        research.finalize(conn,idea_id,u["id"],db.jload(version["report"],{}),inputs,"Выбор производства",
+                          f"Выбран {option} для {market}",bool(db.jload(version["report"],{}).get("partial")))
+    return go(f"/ideas/{idea_id}#production")
+
+
+@app.post("/ideas/{idea_id}/plan/{step_key}")
+def idea_plan(request: Request,idea_id: int,step_key: str,status: str = Form(...),note: str = Form(""),
+              actual_cost: str = Form(""),csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    if status not in ("planned","active","done","stopped"):
+        raise HTTPException(400)
+    with db.db() as conn:
+        if not db.get_idea(conn,idea_id,u["id"]):
+            raise HTTPException(404)
+        version = db.latest_version(conn,idea_id)
+        report = db.jload(version["report"],{}) if version else {}
+        keys = {step["key"] for step in report.get("test_plan",{}).get("steps",[])}
+        if step_key not in keys:
+            raise HTTPException(400)
+        try:
+            cost = float(actual_cost.replace(",",".")) if actual_cost.strip() else None
+        except ValueError:
+            raise HTTPException(400,"Проверьте сумму")
+        if cost is not None and (not math.isfinite(cost) or cost<0):
+            raise HTTPException(400,"Проверьте сумму")
+        conn.execute("INSERT INTO project_progress VALUES(?,?,?,?,?,?) ON CONFLICT(idea_id,step_key) DO UPDATE SET "
+                     "status=excluded.status,note=excluded.note,actual_cost=excluded.actual_cost,updated_at=excluded.updated_at",
+                     (idea_id,step_key,status,note[:3000],cost,db.now_iso()))
+    return go(f"/ideas/{idea_id}#plan")
 
 
 @app.get("/media/{user_id}/{name}")
@@ -427,7 +564,8 @@ def settings_page(request: Request, saved: str = ""):
             conn.execute("UPDATE users SET tg_bind_code=? WHERE id=?", (auth.new_bind_code(), u["id"]))
         user = conn.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone()
         nxt = next_daily_run(conn, u["id"])
-    return render(request, "settings.html", profile=profile, s=s, fields=db.PROFILE_FIELDS, spend=spend,
+        memories = db.feedback(conn,u["id"],remembered=True)
+    return render(request, "settings.html", profile=profile, s=s, fields=db.PROFILE_FIELDS, spend=spend,memories=memories,
                   u=user, saved=saved, timezones=TIMEZONES, next_run=nxt, tg_token=bool(config.TELEGRAM_BOT_TOKEN))
 
 
@@ -458,6 +596,10 @@ async def settings_general(request: Request):
     with db.db() as conn:
         s = db.get_settings(conn, u["id"])
         s["daily_enabled"] = form.get("daily_enabled") == "on"
+        if form.get("market_priority") in ("USA","UAE","balanced"):
+            s["market_priority"] = form.get("market_priority")
+        s["evergreen_first"] = form.get("evergreen_first")=="on"
+        s["refresh_enabled"] = form.get("refresh_enabled")=="on"
         t = str(form.get("daily_time", "09:00"))
         if re.match(r"^\d{2}:\d{2}$", t):
             s["daily_time"] = t
@@ -512,3 +654,4 @@ async def http_exc(request: Request, exc: HTTPException):
         return RedirectResponse(exc.headers["Location"], status_code=303)
     return HTMLResponse(f"<h3>{exc.status_code}</h3><p>{exc.detail}</p><a href='/today'>На главную</a>",
                         status_code=exc.status_code)
+

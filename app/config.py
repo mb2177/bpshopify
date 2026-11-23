@@ -33,8 +33,19 @@ ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 MODEL_RESEARCH = _env("MODEL_RESEARCH", "claude-sonnet-5-5")
 MODEL_FAST = _env("MODEL_FAST", "claude-haiku-5-5")
 MODEL_DEEP = _env("MODEL_DEEP", "claude-opus-5-5")  # «Глубокий разбор» по кнопке
-WEB_SEARCH_TOOL = _env("WEB_SEARCH_TOOL", "web_search_20250305")
-WEB_SEARCH_MAX_USES = int(_env("WEB_SEARCH_MAX_USES", "12"))
+WEB_SEARCH_TOOL = _env("WEB_SEARCH_TOOL", "web_search_20260209")
+WEB_SEARCH_MAX_USES = int(_env("WEB_SEARCH_MAX_USES", "3"))
+MARKET_MAX_TOKENS = int(_env("MARKET_MAX_TOKENS", "7000"))
+PRODUCTION_MAX_TOKENS = int(_env("PRODUCTION_MAX_TOKENS", "4500"))
+SEARCH_INPUT_RESERVE_TOKENS = int(_env("SEARCH_INPUT_RESERVE_TOKENS", "200000"))
+GOOGLE_ADS_DEVELOPER_TOKEN = _env("GOOGLE_ADS_DEVELOPER_TOKEN")
+GOOGLE_ADS_CUSTOMER_ID = _env("GOOGLE_ADS_CUSTOMER_ID").replace("-", "")
+GOOGLE_ADS_CLIENT_ID = _env("GOOGLE_ADS_CLIENT_ID")
+GOOGLE_ADS_CLIENT_SECRET = _env("GOOGLE_ADS_CLIENT_SECRET")
+GOOGLE_ADS_REFRESH_TOKEN = _env("GOOGLE_ADS_REFRESH_TOKEN")
+GOOGLE_ADS_LOGIN_CUSTOMER_ID = _env("GOOGLE_ADS_LOGIN_CUSTOMER_ID").replace("-", "")
+GOOGLE_ADS_API_VERSION = _env("GOOGLE_ADS_API_VERSION", "v24")
+CENSUS_API_KEY = _env("CENSUS_API_KEY")
 
 # Цены (USD). Проверяйте актуальные цены на platform.claude.com/docs.
 PRICE_RESEARCH_IN = _float("PRICE_RESEARCH_IN_PER_MTOK", 2.0)
@@ -62,3 +73,4 @@ MARKETS = ("USA", "UAE")
 MARKET_LABEL = {"USA": "США (USA)", "UAE": "ОАЭ (UAE)", "none": "пока не выбран", None: "пока не выбран", "": "пока не выбран"}
 MARKET_CURRENCY = {"USA": "USD", "UAE": "AED"}
 MARKET_TZ = {"USA": "America/New_York", "UAE": "Asia/Dubai"}
+

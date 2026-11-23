@@ -86,12 +86,14 @@ def test_market_changes_with_conditions():
     inp = filled()
     um = inp["markets"]["UAE"]
     um.update(price=200, unit_cost=8, cac_cons=20, cac_base=15, cac_opt=10, orders_cons=20, orders_base=40, orders_opt=60)
-    sig = [{"type": "observation", "source_url": "https://x"}] * 6
+    from app import db
+    sig = [{"type":"observation","verified":True,"scope":"product","retrieved_at":db.now_iso(),"source_url":f"https://source{i}.example/item"} for i in range(6)]
     rep = {"markets": {mk: {"scores": {k: {"score": 7} for k in ("demand", "intent", "competition", "feasibility")},
-                            "demand": {"signals": sig}, "launch_feasibility": {}} for mk in ("USA", "UAE")}}
+                            "demand": {"signals": sig}, "launch_feasibility": {key:{"status":"ok"} for key in ("payments","legal","fulfilment","product_requirements")}} for mk in ("USA", "UAE")}}
     prof = {"budget_start": 100000, "hours_per_week": 40}
     sc1 = scoring.evaluate(rep, economics.compute(inp), prof)
     assert sc1["market"] == "UAE"  # выше маржа
     rep["markets"]["UAE"]["launch_feasibility"] = {"payments": {"status": "blocked", "note": "нет провайдера"}}
     sc2 = scoring.evaluate(rep, economics.compute(inp), prof)
     assert sc2["market"] == "USA"   # платежи в ОАЭ недоступны → рынок меняется
+

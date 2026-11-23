@@ -328,6 +328,12 @@ async def route_text(message: Message, uid: int, text: str, media: list):
             row = conn.execute("SELECT idea_id FROM tg_message_map WHERE chat_id=? AND message_id=?",
                                (message.chat.id, message.reply_to_message.message_id)).fetchone()
         if row:
+            if any(term in text.lower() for term in ("не нравится", "не подходит", "мне нравится", "запомни", "учитывай", "предпочитаем")):
+                rating = "dislike" if any(term in text.lower() for term in ("не нравится","не подходит")) else "revise"
+                with db.db() as conn:
+                    db.save_feedback(conn,uid,row["idea_id"],rating,text,True)
+                await message.answer(f"Отзыв к идее #{row['idea_id']} сохранён. Учту причину в следующих идеях. Сохранение бесплатно.")
+                return
             return await start_refine(message, uid, row["idea_id"], text, f"tg-ref:{key}")
     mode = pending_take(f"mode:{uid}", uid)
     if mode and mode.get("mode") == "refine":
@@ -431,3 +437,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

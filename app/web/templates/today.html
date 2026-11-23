@@ -2,7 +2,7 @@
 {% import "_macros.html" as M %}
 {% block content %}
 <div class="pagehead">
-  <div><h1>Сегодня</h1><div class="sub">Идея дня и всё, что сейчас в работе</div></div>
+  <div><h1>Сегодня</h1><div class="sub">Круглогодичные товары, проверяемые данные и текущие исследования</div></div>
 </div>
 
 {% if profile_empty %}<div class="notice n-warn">Профиль не заполнен: без бюджета и часов бот не может проверить, потянете ли вы запуск. <a href="/settings#profile">Заполнить профиль</a></div>{% endif %}
@@ -33,7 +33,7 @@
     <details style="margin-top:18px"><summary>Какие варианты рассматривались ({{ candidates|length }})</summary>
       {% for c in candidates %}<div style="padding:12px 0;border-top:1px solid var(--line);margin-top:10px">
         <div class="serif" style="font-weight:500">{{ c.title }}</div>
-        <div class="small muted">{{ c.why }}</div>
+        <div class="small muted">{{ c.why }}</div>{% if c.get('screening_score') is not none %}<p class="small">Предварительный отбор {{ c.screening_score }} · {{ MARKET_LABEL.get(c.market_guess) }} · источников {{ c.evidence_count }}{% if c.is_seasonal is false %} · круглогодичная потребность{% endif %}</p>{% endif %}{% for reason in c.get('screening_reasons') or [] %}<p class="small faint">{{ reason }}</p>{% endfor %}
         {% if c.weakness %}<div class="small faint">Слабое место: {{ c.weakness }}</div>{% endif %}
       </div>{% endfor %}
     </details>
@@ -58,3 +58,4 @@
 
 <p class="small faint">Расходы на исследования в этом месяце: {{ '%.2f'|format(spend) }} из {{ '%.0f'|format(settings.monthly_budget_usd) }} USD.</p>
 {% endblock %}
+

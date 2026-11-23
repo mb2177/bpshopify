@@ -25,14 +25,23 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <label style="color:var(--text)"><input type="checkbox" name="daily_enabled" style="width:auto" {{ 'checked' if s.daily_enabled }}> Каждый день искать идею и присылать в Telegram</label>
     <div class="grid g3">
+      <div><label for="market-priority">Приоритет рынка</label><select id="market-priority" name="market_priority"><option value="USA" {{ 'selected' if s.market_priority=='USA' }}>Сначала США</option><option value="balanced" {{ 'selected' if s.market_priority=='balanced' }}>Равное сравнение</option><option value="UAE" {{ 'selected' if s.market_priority=='UAE' }}>Сначала ОАЭ</option></select></div>
       <div><label>Время</label><input type="time" name="daily_time" value="{{ s.daily_time }}"></div>
       <div><label>Часовой пояс</label><select name="timezone">{% for tz in timezones %}<option {{ 'selected' if s.timezone==tz }}>{{ tz }}</option>{% endfor %}</select></div>
       <div><label>Лимит расходов в месяц, USD</label><input name="monthly_budget_usd" value="{{ s.monthly_budget_usd }}" inputmode="decimal"></div>
       <div><label>Лимит на одно исследование, USD</label><input name="per_idea_budget_usd" value="{{ s.per_idea_budget_usd }}" inputmode="decimal"></div>
     </div>
-    <p class="small muted">Потрачено в этом месяце: {{ '%.2f'|format(spend) }} USD (модель + веб-поиск + голосовые). Следующий ежедневный запуск: {{ next_run }}. Платные исследовательские сервисы не подключены.</p>
+    <label><input type="checkbox" name="evergreen_first" style="width:auto" {{ 'checked' if s.evergreen_first }}> Приоритет круглогодичных товаров с возможностью масштабирования</label>
+    <label><input type="checkbox" name="refresh_enabled" style="width:auto" {{ 'checked' if s.refresh_enabled }}> Проверять сохранённые разборы ежедневно и обновлять исследование раз в {{ s.refresh_days }} дней в пределах бюджета</label>
+    <p class="small muted">В этом месяце {{ '%.2f'|format(spend) }} USD за модель, поиск и голосовые. Следующий запуск {{ next_run }}.</p>
     <button class="btn primary">Сохранить</button>
   </form>
+</section>
+
+<section id="memory" class="card">
+  <h2>Что учитывается в новых идеях</h2>
+  <p class="small muted">Отзывы сохраняются с причиной и версией разбора. Они учитываются при подборе и исследовании следующих идей.</p>
+  {% for f in memories %}<div style="padding:12px 0;border-top:1px solid var(--line)"><a href="/ideas/{{ f.idea_id }}#feedback">{{ f.title }}</a><p>{{ f.comment }}</p></div>{% else %}<p class="muted">Оставьте первый отзыв на странице любой идеи.</p>{% endfor %}
 </section>
 
 <section id="telegram" class="card">
@@ -58,3 +67,4 @@
   <p class="small muted">Shopify и Microsoft Clarity подключаются после запуска магазина (отдельная интеграция с минимальными правами).</p>
 </section>
 {% endblock %}
+

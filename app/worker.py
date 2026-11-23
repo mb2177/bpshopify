@@ -2,6 +2,7 @@
 import logging
 import time
 import traceback
+import signal
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -20,7 +21,7 @@ def schedule_daily() -> None:
         users = conn.execute("SELECT id FROM users").fetchall()
         for u in users:
             s = db.get_settings(conn, u["id"])
-            if not s.get("daily_enabled"):
+            if not s.get("daily_enabled") and not s.get("refresh_enabled",True):
                 continue
             try:
                 tz = ZoneInfo(s.get("timezone") or "Asia/Dubai")
@@ -31,8 +32,13 @@ def schedule_daily() -> None:
             if (now.hour, now.minute) < (hh, mm):
                 continue
             day = now.strftime("%Y-%m-%d")
-            jobs.enqueue(conn, u["id"], "daily", None, {"date": day}, dedupe_key=f"daily:{u['id']}:{day}",
-                         max_attempts=2)
+            if s.get("daily_enabled"):
+                jobs.enqueue(conn, u["id"], "daily", None, {"date": day}, dedupe_key=f"daily:{u['id']}:{day}",
+                             max_attempts=2)
+            if s.get("refresh_enabled",True):
+                for idea in conn.execute("SELECT id FROM ideas WHERE user_id=? AND archived=0 AND current_version>0 "
+                                         "ORDER BY is_project DESC,updated_at DESC",(u["id"],)).fetchall():
+                    jobs.enqueue(conn,u["id"],"refresh",idea["id"],dedupe_key=f"refresh:{idea['id']}:{day}",max_attempts=2)
 
 
 def next_daily_run(conn, user_id: int) -> str:
@@ -74,6 +80,10 @@ def run_job(job) -> None:
         research.run_refine(job)
     elif kind == "daily":
         research.run_daily(job)
+    elif kind == "recalculate":
+        research.run_recalculate(job)
+    elif kind == "refresh":
+        research.run_refresh(job)
     else:
         raise ValueError(f"Неизвестный тип задачи {kind}")
 
@@ -90,6 +100,9 @@ def process_one() -> bool:
     except jobs.Cancelled:
         with db.db() as conn:
             jobs.finish(conn, job["id"], "cancelled")
+    except jobs.RestartRequested:
+        with db.db() as conn:
+            jobs.retry_later(conn,job["id"],0,"Продолжение после обновления приложения")
     except Exception as e:
         name = type(e).__name__
         msg = f"{name}: {e}"
@@ -114,10 +127,20 @@ def main() -> None:
     ensure_admin()
     with db.db() as conn:
         n = jobs.recover_stale(conn)
+        # Upgrade saved reports using stored data. No external model calls are needed for this job.
+        for idea in conn.execute("SELECT id,user_id,current_version FROM ideas WHERE current_version>0").fetchall():
+            version = db.latest_version(conn,idea["id"])
+            if db.jload(version["report"],{}).get("schema_version") != 2:
+                jobs.enqueue(conn,idea["user_id"],"recalculate",idea["id"],
+                             dedupe_key=f"schema2:{idea['id']}:{idea['current_version']}")
     if n:
         log.info("Возвращено в очередь после перезапуска: %s", n)
     last_sched = 0.0
-    while True:
+    def request_shutdown(_signal,_frame):
+        llm.shutdown_requested = True
+    signal.signal(signal.SIGTERM,request_shutdown)
+    signal.signal(signal.SIGINT,request_shutdown)
+    while not llm.shutdown_requested:
         try:
             if time.time() - last_sched > 30:
                 schedule_daily()
@@ -132,3 +155,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
