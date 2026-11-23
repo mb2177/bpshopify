@@ -233,6 +233,19 @@ def test_keyword_csv_ignores_export_metadata():
     assert parsed["rows"][0]["Avg. monthly searches"]=="1,000"
 
 
+def test_census_requires_an_activated_key_before_querying(monkeypatch):
+    monkeypatch.setattr(config,"CENSUS_API_KEY","")
+    monkeypatch.setattr(db,"cache_get",lambda *args:None)
+    monkeypatch.setattr(sources.httpx,"get",lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError("Must not request without key")))
+    try:
+        sources.census_context()
+    except sources.SourceNeedsConnection:
+        pass
+    else:
+        raise AssertionError("Expected connection requirement")
+    assert sources.passport_status({"id":"census"})==sources.KEY
+
+
 def test_economic_edit_rejects_stale_version():
     user_id = owner()
     with db.db() as conn:

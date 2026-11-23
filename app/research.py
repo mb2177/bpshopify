@@ -342,6 +342,8 @@ def collect_context(conn, idea_id: int, parsed: dict, report: dict) -> None:
         conn.execute("INSERT INTO evidence(idea_id,kind,source,market,url,payload,period,retrieved_at) VALUES(?,?,?,?,?,?,?,?)",
             (idea_id,"census","U.S. Census ACS","USA",value["source_url"],db.jdump(value),value["period"],value["retrieved_at"]))
         connections["census"] = "ok"
+    except sources.SourceNeedsConnection:
+        connections["census"] = "needs_connection"
     except Exception as exc:
         db.source_fail("census",type(exc).__name__)
         connections["census"] = "unavailable"

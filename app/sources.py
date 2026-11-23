@@ -16,6 +16,10 @@ import httpx
 from . import config, db
 
 
+class SourceNeedsConnection(RuntimeError):
+    pass
+
+
 def canonical_url(value: str | None) -> str:
     try:
         parts = urlsplit(str(value or ""))
@@ -70,6 +74,8 @@ def census_context() -> dict:
     cached = db.cache_get(key)
     if cached:
         return cached
+    if not config.CENSUS_API_KEY:
+        raise SourceNeedsConnection("Нужен бесплатный ключ CENSUS_API_KEY. С мая 2026 Census требует ключ для запросов данных.")
     url = f"https://api.census.gov/data/{year}/acs/acs5"
     params = {"get":"NAME,B01003_001E,B19013_001E","for":"us:*"}
     if config.CENSUS_API_KEY:
@@ -235,7 +241,7 @@ def passport_status(p: dict) -> str:
     if p["id"] == "keyword_planner" and google_ads_ready():
         return AUTO
     if p["id"] == "census":
-        return AUTO
+        return AUTO if config.CENSUS_API_KEY else KEY
     if p["id"] in ("google_trends", "keyword_planner", "meta_ad_library", "tiktok_cc", "uae_stat"):
         return MANUAL
     if p.get("not_in_mvp"):
@@ -265,7 +271,8 @@ def all_passports() -> list[dict]:
             elif not check.get("last_ok_at"):
                 q["status"] = "ожидает проверки"
         if p["id"] == "census":
-            q.update(access="Public ACS API; ключ необязателен для небольшого числа запросов", needs=None,
+            q.update(access="ACS API требует бесплатный активированный ключ с мая 2026", needs="CENSUS_API_KEY",
+                     howto="Получите и активируйте ключ на api.census.gov/data/key_signup.html, затем задайте CENSUS_API_KEY на сервере.",
                      fields="Население и медианный доход США, контекст рынка",not_in_mvp=False)
         if p["id"] == "keyword_planner":
             q["howto"] = "Загрузите CSV Keyword Planner на странице идеи. Для API задайте GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_CUSTOMER_ID, GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET и GOOGLE_ADS_REFRESH_TOKEN на сервере."

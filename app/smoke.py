@@ -48,6 +48,8 @@ def main():
     try:
         context = sources.census_context()
         print("PUBLIC_SOURCE " + json.dumps({"source":"census", "status":"ok", "period":context["period"]}))
+    except sources.SourceNeedsConnection:
+        print("PUBLIC_SOURCE " + json.dumps({"source":"census", "status":"needs_connection", "requires":"CENSUS_API_KEY"}))
     except Exception as exc:
         db.source_fail("census", type(exc).__name__)
         print("PUBLIC_SOURCE " + json.dumps({"source":"census", "status":"unavailable", "error_type":type(exc).__name__}))
