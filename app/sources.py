@@ -68,18 +68,19 @@ def keyword_metrics(keywords: list[str], market: str) -> dict:
     return result
 
 
-def census_context() -> dict:
+def census_context(user_id=None) -> dict:
     year = datetime.now().year-2
     key = f"census:{year}"
     cached = db.cache_get(key)
     if cached:
         return cached
-    if not config.CENSUS_API_KEY:
+    from . import credentials
+    api_key = credentials.get(user_id,"CENSUS_API_KEY") if user_id is not None else config.CENSUS_API_KEY
+    if not api_key:
         raise SourceNeedsConnection("Нужен бесплатный ключ CENSUS_API_KEY. С мая 2026 Census требует ключ для запросов данных.")
     url = f"https://api.census.gov/data/{year}/acs/acs5"
     params = {"get":"NAME,B01003_001E,B19013_001E","for":"us:*"}
-    if config.CENSUS_API_KEY:
-        params["key"] = config.CENSUS_API_KEY
+    params["key"] = api_key
     response = httpx.get(url,params=params,timeout=15)
     response.raise_for_status()
     rows = response.json()
@@ -92,6 +93,8 @@ def census_context() -> dict:
               "note":"Демографический контекст, без вывода о спросе на конкретный товар."}
     db.cache_put(key,result,86400*30)
     db.source_ok("census")
+    if user_id is not None:
+        db.source_ok(f"analytics:{user_id}:census")
     return result
 
 

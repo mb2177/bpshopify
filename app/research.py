@@ -6,7 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from contextlib import nullcontext
 
-from . import config, db, economics, jobs, llm, notify, prompts, scoring, sources, selection, plans
+from . import config, db, economics, jobs, llm, notify, prompts, scoring, sources, selection, plans, analytics, memory, basis
 
 OWNER_SET = "Задано владельцем"
 
@@ -29,28 +29,13 @@ def _profile_block(profile: dict) -> str:
     return "Профиль владельца:\n" + "\n".join(lines)
 
 
-def _memory_block(conn, user_id: int, idea_id: int | None = None) -> str:
-    rows = list(db.feedback(conn,user_id,remembered=True))
-    if idea_id:
-        by_id = {row["id"]:row for row in rows}
-        by_id.update({row["id"]:row for row in db.feedback(conn,user_id,idea_id)})
-        rows = sorted(by_id.values(),key=lambda row:row["id"],reverse=True)
-    memories = [{"idea":row["title"],"rating":row["rating"],"reason":row["comment"][:450],
-                 "scope":"future" if row["remember"] else "this_idea"} for row in rows[:15]]
-    settings = db.get_settings(conn,user_id)
-    previous = []
-    for idea in conn.execute("SELECT id,title,verdict FROM ideas WHERE user_id=? ORDER BY updated_at DESC LIMIT 8",(user_id,)):
-        version = db.latest_version(conn,idea["id"])
-        report = db.jload(version["report"],{}) if version else {}
-        previous.append({"title":idea["title"],"verdict":idea["verdict"],
-                         "main_risk":(report.get("market") or {}).get("main_risk")})
-    instructions = []
-    if idea_id:
-        instructions = [row["change_request"] for row in conn.execute(
-            "SELECT change_request FROM idea_versions WHERE idea_id=? AND version>1 AND change_request IS NOT NULL ORDER BY version DESC LIMIT 5",(idea_id,))]
-    return "Предпочтения и обратная связь владельца. " + db.jdump({"market_priority":settings["market_priority"],
-        "evergreen_first":settings["evergreen_first"],"feedback":memories,"previous_analyses":previous,
-        "previous_instructions":instructions})[:14000]
+def _memory_block(conn, user_id: int, idea_id: int | None = None, ctx=None) -> str:
+    if ctx is not None:
+        if ctx.memory_snapshot is None:
+            ctx.memory_snapshot = jobs.cached_step(ctx.job_id,"memory_snapshot") or memory.snapshot(conn,user_id,idea_id)
+            jobs.store_step(ctx.job_id,"memory_snapshot",ctx.memory_snapshot)
+        return memory.block(ctx.memory_snapshot)
+    return memory.block(memory.snapshot(conn,user_id,idea_id))
 
 
 def _evidence_block(conn, idea_id: int) -> str:
@@ -60,7 +45,10 @@ def _evidence_block(conn, idea_id: int) -> str:
     parts = ["Собранные доказательства (дата получения указана):"]
     for r in rows:
         p = db.jload(r["payload"], {})
-        if r["kind"] == "trends_csv":
+        if r["kind"] in analytics.MEASUREMENT_KINDS:
+            parts.append("- Аналитические измерения API: " + db.jdump({key:p.get(key) for key in
+                ("provider","kind","market","query","metrics","period","retrieved_at","source_url","limitation")}))
+        elif r["kind"] == "trends_csv":
             parts.append(f"- Google Trends CSV, рынок {r['market']}, период {r['period']}, получено {r['retrieved_at'][:10]}: "
                          f"{db.jdump(p.get('stats'))}")
         elif r["kind"] == "comtrade":
@@ -116,7 +104,7 @@ def step_parse(ctx, idea) -> dict:
 
 
 def step_market(ctx, conn, idea, profile, parsed, instruction: str | None = None, step="market") -> dict:
-    text = "\n\n".join(filter(None, [_dates_block(), _profile_block(profile), _memory_block(conn,idea["user_id"],idea["id"]), _idea_block(idea, parsed),
+    text = "\n\n".join(filter(None, [_dates_block(), _profile_block(profile), _memory_block(conn,idea["user_id"],idea["id"],ctx), _idea_block(idea, parsed),
                                      _evidence_block(conn, idea["id"]),
                                      f"Дополнительное указание владельца: {instruction}" if instruction else None]))
     return llm.json_call(ctx, step, prompts.MARKET, text, search=True,max_searches=3,
@@ -130,7 +118,7 @@ def step_production(ctx, conn, idea, profile, parsed, market_rep, instruction: s
         mr = (market_rep.get("markets") or {}).get(mk) or {}
         summary[f"{mk}_price_range"] = mr.get("price_range")
         summary[f"{mk}_fulfilment"] = (mr.get("launch_feasibility") or {}).get("fulfilment")
-    text = "\n\n".join(filter(None, [_dates_block(), _profile_block(profile), _memory_block(conn,idea["user_id"],idea["id"]),
+    text = "\n\n".join(filter(None, [_dates_block(), _profile_block(profile), _memory_block(conn,idea["user_id"],idea["id"],ctx),
                                      _evidence_block(conn,idea["id"]),_idea_block(idea, parsed),
                                      "Итоги исследования рынка: " + db.jdump(summary),
                                      f"Дополнительное указание владельца: {instruction}" if instruction else None]))
@@ -302,15 +290,22 @@ def finalize(conn, idea_id: int, user_id: int, report: dict, econ_inputs: dict, 
                         econ_inputs["markets"][mk][key] = deepcopy(market.get(key))
                         econ_inputs["markets"][mk].setdefault("_meta",{})[key] = meta
         profile = db.get_profile(conn, user_id)
-        profile["market_priority"] = db.get_settings(conn,user_id)["market_priority"]
+        settings = db.get_settings(conn,user_id)
+        profile["market_priority"] = settings["market_priority"]
+        profile["require_analytics"] = settings["require_analytics"] and not config.FAKE_LLM
+        report["rule_context"] = {"rules":memory.active_rules(conn,user_id),"checked_at":db.now_iso()}
+        profile["feedback_rules"] = report["rule_context"]["rules"]
+        evidence = conn.execute("SELECT * FROM evidence WHERE idea_id=?",(idea_id,)).fetchall()
+        analytics.attach(report,evidence)
         target_income = _f(profile.get("target_income"))
         for mk,m in econ_inputs.get("markets",{}).items():
             if target_income is not None and m.get("_meta",{}).get("target_profit_month",{}).get("source") != OWNER_SET:
                 m["target_profit_month"] = economics.convert(target_income,"USD",m["currency"])
         econ = economics.compute(econ_inputs)
         sc = scoring.evaluate(report.get("market") or {}, econ, profile)
-        report["schema_version"] = 2
+        report["schema_version"] = 3
         report["test_plan"] = plans.build(report,econ,profile,sc)
+        report["basis"] = basis.build(report,econ,sc)
         v = db.save_version(conn, idea_id, report, econ_inputs, econ, sc, change_request, change_summary)
         title = (report.get("market") or {}).get("title")
         fields = dict(score=sc["score"], verdict=sc["verdict_label"], market=sc["market"],
@@ -321,7 +316,7 @@ def finalize(conn, idea_id: int, user_id: int, report: dict, econ_inputs: dict, 
         return {"version": v, "scoring": sc}
 
 
-def collect_context(conn, idea_id: int, parsed: dict, report: dict) -> None:
+def collect_context(conn, idea_id: int, parsed: dict, report: dict, ctx=None) -> None:
     if config.FAKE_LLM:
         return
     connections = report.setdefault("connections",{})
@@ -338,7 +333,7 @@ def collect_context(conn, idea_id: int, parsed: dict, report: dict) -> None:
             db.source_fail("keyword_planner",type(exc).__name__)
             connections[f"keyword_planner_{mk}"] = "unavailable"
     try:
-        value = sources.census_context()
+        value = sources.census_context(ctx.user_id if ctx else None)
         conn.execute("INSERT INTO evidence(idea_id,kind,source,market,url,payload,period,retrieved_at) VALUES(?,?,?,?,?,?,?,?)",
             (idea_id,"census","U.S. Census ACS","USA",value["source_url"],db.jdump(value),value["period"],value["retrieved_at"]))
         connections["census"] = "ok"
@@ -349,6 +344,39 @@ def collect_context(conn, idea_id: int, parsed: dict, report: dict) -> None:
         connections["census"] = "unavailable"
     if parsed.get("hs_code"):
         report["comtrade"] = step_comtrade(conn,idea_id,parsed["hs_code"])
+    if ctx:
+        keywords = parsed.get("keywords") or [parsed.get("product") or ""]
+        report["analytics_queries"] = keywords
+        existing = [db.jload(row["payload"],{}) for row in conn.execute("SELECT payload FROM evidence WHERE idea_id=? AND kind IN "
+            "('trends_api','search_volume_api','ad_library_api','shopping_api') ORDER BY id DESC",(idea_id,))]
+        bundles = analytics.collect(ctx,keywords,existing=existing)
+        report["analytics_connections"] = [{key:bundle.get(key) for key in ("kind","market","provider","status","error")} for bundle in bundles]
+        for bundle in bundles:
+            if bundle.get("retrieved_at"):
+                analytics.save_bundle(conn,idea_id,bundle)
+
+
+def enrich_keepa(conn, ctx, idea, report):
+    status = {"kind":"marketplace_api","provider":"keepa","market":"USA","status":"needs_connection"}
+    report.setdefault("analytics_connections",[]).append(status)
+    if not analytics.credentials.ready(ctx.user_id,"keepa"):
+        return
+    urls = [row.get("url") for row in db.jload(idea["input_links"],[])]
+    urls += [row.get("url") for row in ctx.seen_sources]
+    us = ((report.get("market") or {}).get("markets") or {}).get("USA") or {}
+    known = {sources.canonical_url(url) for url in urls}
+    urls += [row.get("url") for row in us.get("competitors",[]) if sources.canonical_url(row.get("url")) in known]
+    asins = analytics.asins_from_urls(urls)
+    report["analytics_asins"] = asins
+    if not asins:
+        status["status"] = "needs_asin"
+        return
+    try:
+        bundle = analytics.keepa(ctx,asins)
+        analytics.save_bundle(conn,idea["id"],bundle)
+        status["status"] = bundle["status"]
+    except Exception as exc:
+        status.update(status="unavailable",error=str(exc) if isinstance(exc,analytics.AnalyticsError) else type(exc).__name__)
 
 
 def _new_report(parsed: dict | None) -> dict:
@@ -398,7 +426,7 @@ def run_research(job) -> None:
             notify.ask(user_id, idea_id, question, f"question:{idea_id}:{job_id}")
             return
         with db.db() as conn:
-            collect_context(conn,idea_id,parsed,report)
+            collect_context(conn,idea_id,parsed,report,ctx)
             upd = {"stage": "Исследую спрос и конкурентов: США (USA) и ОАЭ (UAE)"}
             if parsed.get("title"):
                 upd["title"] = parsed["title"][:120]
@@ -407,6 +435,8 @@ def run_research(job) -> None:
             db.set_idea(conn, idea_id, **upd)
             idea = db.get_idea(conn, idea_id, user_id)
             report["market"] = step_market(ctx, conn, idea, profile, parsed, assume_note)
+            report["memory_context"] = {**(ctx.memory_snapshot or {}),"sent_to_model":True}
+            enrich_keepa(conn,ctx,idea,report)
         with db.db() as conn:
             db.set_idea(conn, idea_id, stage="Подбираю производство и подрядчиков")
         try:
@@ -548,7 +578,16 @@ def run_refine(job) -> None:
             log = ["Пересмотрены варианты производства"]
         else:  # market / full
             with db.db() as conn:
+                clarified = dict(idea)
+                clarified["input_text"] = "Текущий товар: " + str((report.get("market") or {}).get("product") or idea["input_text"]) + "\nУточнение владельца: " + text
+                parsed = step_parse(ctx,clarified)
+                if parsed.get("critical_question"):
+                    db.set_idea(conn,idea_id,status="needs_input",stage=str(parsed["critical_question"])[:700])
+                    return
+                report["input"] = parsed
+                collect_context(conn,idea_id,report.get("input") or {},report,ctx)
                 report["market"] = step_market(ctx, conn, idea, profile, report.get("input"), instr, step="market_r")
+                enrich_keepa(conn,ctx,idea,report)
                 if scope == "full":
                     report["production"] = step_production(ctx, conn, idea, profile, report.get("input"),
                                                            report["market"], instr, step="production_r")
@@ -556,6 +595,8 @@ def run_refine(job) -> None:
                                                     report.get("production") if scope == "full" else None)
             log = ["Обновлено исследование рынка" + (" и производства" if scope == "full" else "")]
         report["seen_sources"] = (report.get("seen_sources") or []) + ctx.seen_sources
+        if ctx.memory_snapshot is not None:
+            report["memory_context"] = {**ctx.memory_snapshot,"sent_to_model":True}
         if scope in ("competitors","production","market","full"):
             with db.db() as conn:
                 sources.validate_evidence(report,conn.execute("SELECT * FROM evidence WHERE idea_id=?",(idea_id,)).fetchall())
@@ -616,10 +657,10 @@ def run_daily(job) -> None:
     if existing:
         return
     with db.db() as conn:
-        memory = _memory_block(conn,user_id)
+        memory_text = _memory_block(conn,user_id,ctx=ctx)
         settings = db.get_settings(conn,user_id)
     profile["market_priority"] = settings["market_priority"]
-    text = "\n\n".join([_dates_block(), _profile_block(profile),memory,
+    text = "\n\n".join([_dates_block(), _profile_block(profile),memory_text,
                         "История идей (не повторять косметически): " + "; ".join(hist or ["пусто"])])
     try:
         res = llm.json_call(ctx, "daily", prompts.DAILY, text, search=True, max_tokens=5000, max_searches=4)
@@ -627,6 +668,15 @@ def run_daily(job) -> None:
         notify.simple(user_id, f"⚠️ Ежедневное исследование {run_date} не выполнено: {e}", f"daily-budget:{run_date}")
         return
     cands = selection.rank(res.get("candidates") or [],settings,hist,ctx.seen_sources)
+    cands = analytics.screen_candidates(ctx,cands,settings)
+    rules = (ctx.memory_snapshot or {}).get("rules") or []
+    for candidate in cands:
+        checks = memory.check_rules({"seasonality":{"is_seasonal":candidate.get("is_seasonal")},
+            "product_attributes":candidate.get("product_attributes") or {}},rules)
+        candidate["preference_checks"] = checks
+        if any(check["status"]!="ok" for check in checks):
+            candidate["eligible"] = False
+            candidate["screening_reasons"].append("Обязательные предпочтения не подтверждены")
     if config.FAKE_LLM:
         for candidate in cands:
             candidate["eligible"] = True
@@ -653,6 +703,8 @@ def run_daily(job) -> None:
         evidence_links = [{"url":e["source_url"]} for e in c.get("evidence",[]) if sources.canonical_url(e.get("source_url"))]
         txt += "\nОснования предварительного отбора — " + db.jdump(c)
         idea_id = db.create_idea(conn, user_id, "daily", txt, title=c.get("title"),links=evidence_links)
+        for bundle in (c.get("analytics_screen") or {}).get("bundles",[]):
+            analytics.save_bundle(conn,idea_id,bundle)
         conn.execute("INSERT OR IGNORE INTO daily_runs(user_id,run_date,idea_id,summary,candidates,created_at) VALUES(?,?,?,?,?,?)",
                      (user_id, run_date, idea_id, c.get("why"), db.jdump(cands), db.now_iso()))
         jobs.enqueue(conn,user_id,"research",idea_id,{"budget_group":job_id,"daily_date":run_date,
@@ -746,7 +798,52 @@ def run_refresh(job) -> None:
             if not busy:
                 jobs.enqueue(conn,job["user_id"],"research",job["idea_id"],{"force_fresh":True},
                              dedupe_key=f"refresh-research:{job['id']}")
-    elif report.get("schema_version") != 2 or old_quality != new_quality:
+    elif report.get("schema_version") != 3 or old_quality != new_quality:
         run_recalculate(job,report)
     db.source_ok(f"idea:{job['idea_id']}:refresh")
+
+
+def run_analytics(job):
+    """Refresh analytical APIs and calculations without paying for a model response."""
+    with db.db() as conn:
+        idea = db.get_idea(conn,job["idea_id"],job["user_id"])
+        version = db.latest_version(conn,job["idea_id"])
+        if not idea or not version:
+            return
+        report = db.jload(version["report"],{})
+        ctx = make_ctx(conn,job["user_id"],job["id"])
+        collect_context(conn,idea["id"],report.get("input") or {"product":idea["title"]},report,ctx)
+        ctx.seen_sources = report.get("seen_sources") or []
+        enrich_keepa(conn,ctx,idea,report)
+    # Recalculation reads the latest financial edits, rather than an input snapshot taken before the API calls.
+    run_recalculate(job,report)
+
+
+def run_connection_check(job):
+    provider = db.jload(job["payload"],{}).get("provider")
+    if provider not in analytics.PROVIDERS:
+        raise ValueError("Неизвестное подключение")
+    with db.db() as conn:
+        ctx = make_ctx(conn,job["user_id"],job["id"])
+        ctx.analytics_force_fresh = True
+    try:
+        if provider=="dataforseo":
+            analytics.trends(ctx,["desk mat"],"USA")
+        elif provider=="searchapi":
+            analytics.ads(ctx,"desk mat","USA")
+        elif provider=="keepa":
+            # A product request is only sent when an owner-supplied ASIN is available.
+            with db.db() as conn:
+                rows = conn.execute("SELECT input_links FROM ideas WHERE user_id=? ORDER BY id DESC LIMIT 30",(job["user_id"],)).fetchall()
+            urls = [link.get("url") for row in rows for link in db.jload(row["input_links"],[])]
+            asins = analytics.asins_from_urls(urls)
+            if not asins:
+                raise analytics.AnalyticsError("Добавьте ссылку Amazon.com на странице идеи, затем обновите её аналитику")
+            analytics.keepa(ctx,asins[:1])
+        else:
+            sources.census_context(job["user_id"])
+    except Exception as exc:
+        error = str(exc) if isinstance(exc,(analytics.AnalyticsError,sources.SourceNeedsConnection,llm.BudgetExceeded)) else type(exc).__name__
+        db.source_fail(f"analytics:{job['user_id']}:{provider}",error)
+        raise analytics.AnalyticsError(error) from None
 

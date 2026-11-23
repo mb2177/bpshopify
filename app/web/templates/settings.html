@@ -33,6 +33,10 @@
     </div>
     <label><input type="checkbox" name="evergreen_first" style="width:auto" {{ 'checked' if s.evergreen_first }}> Приоритет круглогодичных товаров с возможностью масштабирования</label>
     <label><input type="checkbox" name="refresh_enabled" style="width:auto" {{ 'checked' if s.refresh_enabled }}> Проверять сохранённые разборы ежедневно и обновлять исследование раз в {{ s.refresh_days }} дней в пределах бюджета</label>
+    <input type="hidden" name="analytics_form_present" value="1">
+    <label><input type="checkbox" name="require_analytics" style="width:auto" {{ 'checked' if s.require_analytics }}> Для рекомендации теста требовать измерения из аналитических API</label>
+    <details style="margin:14px 0"><summary>Лимиты аналитических сервисов</summary><p class="small muted">Расходы DataForSEO входят в общий бюджет. Подписки SearchApi и Keepa оплачиваются отдельно. Запросы и токены ограничены здесь.</p><div class="grid g2">
+    {% for key,label in [('analytics_per_idea_usd','DataForSEO на разбор, USD'),('analytics_calls_per_idea','Запросов API на разбор'),('analytics_calls_per_month','Запросов API за месяц'),('keepa_tokens_per_month','Токенов Keepa за месяц')] %}<div><label>{{ label }}</label><input name="{{ key }}" value="{{ s[key] }}" inputmode="decimal"></div>{% endfor %}</div></details>
     <p class="small muted">В этом месяце {{ '%.2f'|format(spend) }} USD за модель, поиск и голосовые. Следующий запуск {{ next_run }}.</p>
     <button class="btn primary">Сохранить</button>
   </form>
@@ -41,6 +45,7 @@
 <section id="memory" class="card">
   <h2>Что учитывается в новых идеях</h2>
   <p class="small muted">Отзывы сохраняются с причиной и версией разбора. Они учитываются при подборе и исследовании следующих идей.</p>
+  {% for rule in active_rules %}<p class="small">✅ Обязательное предпочтение — {{ rule.label }}, отзыв #{{ rule.feedback_id }}.</p>{% endfor %}
   {% for f in memories %}<div style="padding:12px 0;border-top:1px solid var(--line)"><a href="/ideas/{{ f.idea_id }}#feedback">{{ f.title }}</a><p>{{ f.comment }}</p></div>{% else %}<p class="muted">Оставьте первый отзыв на странице любой идеи.</p>{% endfor %}
 </section>
 

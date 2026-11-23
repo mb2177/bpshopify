@@ -202,6 +202,34 @@ CREATE TABLE IF NOT EXISTS budget_reservations (
     amount REAL NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS integration_secrets (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(user_id,name)
+);
+CREATE TABLE IF NOT EXISTS analytics_calls (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    job_id INTEGER,
+    budget_group INTEGER,
+    provider TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cost_usd REAL,
+    units REAL NOT NULL DEFAULT 1,
+    unit TEXT NOT NULL DEFAULT 'request',
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS analytics_job ON analytics_calls(user_id,budget_group);
+CREATE TABLE IF NOT EXISTS feedback_rules (
+    feedback_id INTEGER NOT NULL REFERENCES idea_feedback(id),
+    rule_key TEXT NOT NULL,
+    PRIMARY KEY(feedback_id,rule_key)
+);
 """
 
 
@@ -309,6 +337,11 @@ DEFAULT_SETTINGS = {
     "research_mode": "standard",
     "refresh_enabled": True,
     "refresh_days": 7,
+    "require_analytics": True,
+    "analytics_per_idea_usd": 0.35,
+    "analytics_calls_per_idea": 12,
+    "analytics_calls_per_month": 300,
+    "keepa_tokens_per_month": 100,
 }
 
 PROFILE_FIELDS = [
