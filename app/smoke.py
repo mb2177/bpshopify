@@ -1,12 +1,45 @@
-"""Read-only checks of the deployed routes and saved reports. Never call a paid model."""
+"""Read-only route checks, with an explicit optional one-time budgeted API probe."""
 import json
+import sys
 from collections import Counter
 
 import httpx
 from fastapi.testclient import TestClient
 
-from . import config, db, sources
+from . import config, db, sources, jobs, llm
 from .web.main import app
+
+
+def verify_research_once(user_id, settings):
+    """One bounded release probe, tracked in usage; completed probes never repeat."""
+    with db.db() as conn, db.tx(conn):
+        existing = conn.execute("SELECT * FROM jobs WHERE dedupe_key=?",("release-verify:2026-11-22-cost-controls",)).fetchone()
+        if existing:
+            assert existing["status"] == "done", "Release probe needs review before another paid attempt"
+            print("RESEARCH_VERIFY " + json.dumps({"status":"already_verified", "cost_usd":db.job_spend(conn,existing["id"])}))
+            return
+        job_id = jobs.enqueue(conn,user_id,"verification",dedupe_key="release-verify:2026-11-22-cost-controls")
+        conn.execute("UPDATE jobs SET status='running',started_at=?,attempts=1 WHERE id=?",(db.now_iso(),job_id))
+    ctx = llm.Ctx(user_id,job_id,per_job_limit=min(0.5,float(settings["per_idea_budget_usd"])),
+                  monthly_limit=float(settings["monthly_budget_usd"]))
+    system = "Проверка соединения исследовательского API. Обязательно выполни ровно один веб-поиск. Ответь одной короткой строкой и ссылкой."
+    prompt = "Найди официальную страницу Census Bureau Requesting a Census Data API Key от 11 мая 2026. Требуется ли ключ для запросов данных? Используй веб-поиск."
+    try:
+        text = llm.call(ctx,"release_verify",system,prompt,search=True,max_searches=1,max_tokens=800)
+        with db.db() as conn:
+            spent = db.job_spend(conn,job_id)
+            searches = conn.execute("SELECT COALESCE(SUM(searches),0) FROM usage WHERE job_id=?",(job_id,)).fetchone()[0]
+        assert text and searches == 1 and ctx.seen_sources, "Search did not return verifiable sources"
+        cached = llm.call(ctx,"release_verify_cached",system,prompt,search=True,max_searches=1,max_tokens=800)
+        with db.db() as conn:
+            assert cached == text and db.job_spend(conn,job_id) == spent, "Repeated query cache failed"
+            jobs.finish(conn,job_id,"done")
+        print("RESEARCH_VERIFY " + json.dumps({"status":"ok","searches":searches,"cost_usd":round(spent,6),
+            "cached_repeat_cost_usd":0,"limit_usd":ctx.per_job_limit}))
+    except Exception as exc:
+        with db.db() as conn:
+            jobs.finish(conn,job_id,"failed",type(exc).__name__)
+        raise RuntimeError("Research release probe failed: " + type(exc).__name__) from None
 
 
 def main():
@@ -55,6 +88,8 @@ def main():
         print("PUBLIC_SOURCE " + json.dumps({"source":"census", "status":"unavailable", "error_type":type(exc).__name__}))
     print("SOURCE_ACCESS " + json.dumps({"keyword_planner_api":sources.google_ads_ready(),
         "trends":"manual_csv", "voice":bool(config.OPENAI_API_KEY)}))
+    if "--verify-research-once" in sys.argv:
+        verify_research_once(user["id"],settings)
 
 
 if __name__ == "__main__":
