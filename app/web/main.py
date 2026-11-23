@@ -320,6 +320,22 @@ def idea_refine(request: Request, idea_id: int, text: str = Form(...), csrf_toke
     return go(f"/ideas/{idea_id}")
 
 
+@app.post("/ideas/{idea_id}/auto")
+def idea_auto(request: Request, idea_id: int, csrf_token: str = Form(...)):
+    """«Реши сам»: продолжить исследование без ответа владельца, с явным допущением."""
+    u = need_user(request)
+    csrf(request, csrf_token)
+    with db.db() as conn:
+        idea = db.get_idea(conn, idea_id, u["id"])
+        if not idea:
+            raise HTTPException(404)
+        if idea["status"] == "needs_input":
+            jobs.enqueue(conn, u["id"], "research", idea_id, {"auto_assume": True},
+                         dedupe_key=f"auto:{idea_id}:{idea['updated_at']}")
+            db.set_idea(conn, idea_id, status="queued", stage="Выбираю вариант сам и продолжаю исследование")
+    return go(f"/ideas/{idea_id}")
+
+
 @app.post("/ideas/{idea_id}/rerun")
 def idea_rerun(request: Request, idea_id: int, csrf_token: str = Form(...)):
     u = need_user(request)

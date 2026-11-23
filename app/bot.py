@@ -255,6 +255,43 @@ async def cmd_cancel(message: Message):
 
 # ---------- кнопки ----------
 
+CONFUSED = ("о чем", "о чём", "не понял", "не понимаю", "что это", "какая идея", "что за", "какой идеи", "откуда", "зачем", "кто ты")
+
+
+def is_confused(text: str) -> bool:
+    """Ответ «ты о чём?» — это не ответ на вопрос, платное исследование не запускаем."""
+    t = (text or "").lower().strip()
+    return len(t) <= 60 and (any(c in t for c in CONFUSED) or t in ("?", "??", "что?", "а?"))
+
+
+async def explain_question(message: Message, idea):
+    where = ("Её выбрал сам бот в ежедневном поиске (идея дня), вы её не присылали."
+             if idea["origin"] == "daily" else "Это ваша идея.")
+    await message.answer(
+        f"Идея #{idea['id']} «{idea['title']}». {where}\n\nПеред платным исследованием мне не хватило одной детали:\n"
+        f"{idea['stage']}\n\nОтветьте на это сообщение или нажмите «Реши сам».",
+        reply_markup=kb([[{"text": "🤖 Реши сам", "callback_data": f"auto:{idea['id']}"}]]))
+
+
+@dp.callback_query(F.data.startswith("auto:"))
+async def cb_auto(cb: CallbackQuery):
+    """«Реши сам»: продолжить исследование, бот выбирает вариант и пишет допущение."""
+    uid = owner_of(cb.message.chat.id)
+    if not uid:
+        return await cb.answer("Нет доступа")
+    idea_id = int(cb.data.split(":")[1])
+    with db.db() as conn:
+        idea = db.get_idea(conn, idea_id, uid)
+        if not idea or idea["status"] != "needs_input":
+            return await cb.answer("Уже обработано")
+        jobs.enqueue(conn, uid, "research", idea_id, {"auto_assume": True}, dedupe_key=f"auto:{idea_id}:{idea['updated_at']}")
+        db.set_idea(conn, idea_id, status="queued", stage="Выбираю вариант сам и продолжаю исследование")
+    await cb.answer("Продолжаю")
+    await cb.message.edit_reply_markup(reply_markup=None)
+    msg = await cb.message.answer(f"🤖 Идея #{idea_id}: выберу вариант сам и напишу в разборе, что предположил. Пришлю оценку и ссылку.")
+    map_msg(cb.message.chat.id, msg.message_id, idea_id)
+
+
 @dp.callback_query(F.data.startswith("cancel:"))
 async def cb_cancel(cb: CallbackQuery):
     uid = owner_of(cb.message.chat.id)
@@ -334,6 +371,10 @@ async def route_text(message: Message, uid: int, text: str, media: list):
                     db.save_feedback(conn,uid,row["idea_id"],rating,text,True)
                 await message.answer(f"Отзыв к идее #{row['idea_id']} сохранён. Учту причину в следующих идеях. Сохранение бесплатно.")
                 return
+            with db.db() as conn:
+                idea = db.get_idea(conn, row["idea_id"], uid)
+            if idea and idea["status"] == "needs_input" and is_confused(text):
+                return await explain_question(message, idea)
             return await start_refine(message, uid, row["idea_id"], text, f"tg-ref:{key}")
     mode = pending_take(f"mode:{uid}", uid)
     if mode and mode.get("mode") == "refine":

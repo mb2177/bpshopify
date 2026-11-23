@@ -205,3 +205,61 @@ def test_telegram_card_explains_verdict():
     txt = notify.explain(sc, {"market": rep})
     assert "По рынкам" in txt and "Почему:" in txt and "Цена товара" in txt
     assert "Риск: Сезон короткий" in txt and "Шаг: Заказать образцы" in txt
+
+
+def test_daily_idea_never_asks_owner(monkeypatch):
+    """Идею дня выбрал бот — вопрос владельцу не отправляется, бот делает допущение."""
+    from app import fake_llm, notify
+    u = uid()
+    orig = fake_llm.respond
+    def with_question(step, content):
+        out = orig(step, content)
+        if step == "parse":
+            out = out.replace('"critical_question": null', '"critical_question": "Только этикетки или ещё крышки?"')
+        return out
+    monkeypatch.setattr(fake_llm, "respond", with_question)
+    asked = []
+    monkeypatch.setattr(notify, "ask", lambda *a, **k: asked.append(a))
+    with db.db() as conn:
+        daily_id = db.create_idea(conn, u, "daily", "Растворимые этикетки для банок")
+        own_id = db.create_idea(conn, u, "telegram", "Этикетки для банок")
+        jobs.enqueue(conn, u, "research", daily_id, dedupe_key=f"dq:{daily_id}")
+        jobs.enqueue(conn, u, "research", own_id, dedupe_key=f"dq:{own_id}")
+    drain()
+    with db.db() as conn:
+        daily, own = db.get_idea(conn, daily_id, u), db.get_idea(conn, own_id, u)
+        rep = db.jload(db.latest_version(conn, daily_id)["report"])
+    assert daily["status"] == "ready" and rep["assumptions"] == ["Только этикетки или ещё крышки?"]
+    assert own["status"] == "needs_input" and len(asked) == 1 and asked[0][1] == own_id
+    # ответ владельца продолжает исследование и больше не спрашивает
+    with db.db() as conn:
+        jobs.enqueue(conn, u, "refine", own_id, {"text": "только этикетки"}, dedupe_key=f"ans:{own_id}")
+    drain()
+    with db.db() as conn:
+        own = db.get_idea(conn, own_id, u)
+    assert own["status"] == "ready" and "Ответ владельца: только этикетки" in own["input_text"] and len(asked) == 1
+
+
+def test_confused_reply_detection():
+    from app.bot import is_confused
+    assert is_confused("Ты вообще о чем?") and is_confused("не понял") and is_confused("?")
+    assert not is_confused("только этикетки, размеры regular и wide-mouth")
+
+
+def test_too_long_answer_retries_compact(monkeypatch):
+    from app import llm
+    calls = []
+    def fake_call(ctx, step, system, content, **kw):
+        calls.append((step, kw.get("max_tokens"), kw.get("max_searches")))
+        if not step.endswith(":compact"):
+            raise llm.ResponseTooLong("long")
+        return '```json\n{"ok": true}\n```'
+    monkeypatch.setattr(llm, "call", fake_call)
+    out = llm.json_call(llm.Ctx(user_id=1), "market", "sys", "text", search=True, max_tokens=12000, max_searches=3)
+    assert out == {"ok": True} and calls[1] == ("market:compact", 18000, 1)
+
+
+def test_human_error_message():
+    from app import llm, worker
+    msg = worker.human_error(4, llm.ResponseTooLong("x"))
+    assert "Идея #4" in msg and "слишком длинным" in msg and "ValueError" not in msg

@@ -74,7 +74,9 @@
   {% elif idea.status == 'failed' %}
     <div class="notice n-bad" style="margin-top:16px">{{ idea.stage or 'Ошибка исследования' }}. <a href="/logs">Открыть журнал</a></div>
   {% elif idea.status == 'needs_input' %}
-    <div class="notice n-info" style="margin-top:16px"><b>Нужен ваш ответ</b><p>{{ idea.stage }}</p><a href="#refine">Ответить и продолжить</a></div>
+    <div class="notice n-info" style="margin-top:16px"><b>Нужен ваш ответ</b><p>{{ idea.stage }}</p><div class="row" style="margin-top:8px"><a class="btn sm" href="#refine">Ответить</a>
+      <form method="post" action="/ideas/{{ idea.id }}/auto"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="btn sm primary">Реши сам</button></form></div>
+      <p class="small muted" style="margin:8px 0 0">{{ 'Эту идею выбрал бот в ежедневном поиске.' if idea.origin == 'daily' else '' }} «Реши сам» — бот выберет самый разумный вариант и напишет в разборе, что предположил.</p></div>
   {% endif %}
   {% if not is_latest %}<div class="notice n-warn" style="margin-top:16px">Это старая версия. <a href="/ideas/{{ idea.id }}">Открыть актуальную</a></div>{% endif %}
   {% for p_ in report.get('partial') or [] %}<div class="notice n-warn" style="margin-top:16px">{{ p_ }}</div>{% endfor %}

@@ -72,6 +72,24 @@ def backup_db() -> None:
         old.unlink(missing_ok=True)
 
 
+def human_error(idea_id: int, e: Exception) -> str:
+    """Сообщение об ошибке простыми словами: что случилось и что делать."""
+    name = type(e).__name__
+    text = str(e)
+    if name == "ResponseTooLong":
+        why = "ответ модели оказался слишком длинным даже после сокращения"
+    elif name in ("JSONDecodeError",) or "JSON" in text:
+        why = "модель вернула ответ в неправильном формате"
+    elif name in TRANSIENT:
+        why = "сервис Claude временно не отвечает"
+    elif any("а" <= ch <= "я" for ch in text.lower()):
+        why = text.rstrip(".")
+    else:
+        why = f"внутренняя ошибка ({name})"
+    return (f"❌ Идея #{idea_id}: разбор не завершён — {why}.\n"
+            f"Что делать: откройте идею на сайте и нажмите «Обновить разбор». Уже оплаченные шаги повторно не оплачиваются.")
+
+
 def run_job(job) -> None:
     kind = job["kind"]
     if kind == "research":
@@ -116,8 +134,7 @@ def process_one() -> bool:
                     db.set_idea(conn, job["idea_id"], status="failed", stage=f"Ошибка: {name}")
                 from . import notify
                 if job["idea_id"]:
-                    notify.simple(job["user_id"], f"❌ Идея #{job['idea_id']}: ошибка исследования ({name}). "
-                                                  f"Подробности в журнале на сайте.", f"fail:{job['id']}", job["idea_id"])
+                    notify.simple(job["user_id"], human_error(job["idea_id"], e), f"fail:{job['id']}", job["idea_id"])
     return True
 
 

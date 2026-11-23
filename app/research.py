@@ -384,12 +384,18 @@ def run_research(job) -> None:
     try:
         parsed = step_parse(ctx, idea)
         report["input"] = parsed
-        if parsed.get("critical_question"):
-            question = str(parsed["critical_question"])[:700]
+        payload = db.jload(job["payload"], {})
+        assume_note = None
+        question = str(parsed.get("critical_question") or "").strip()[:700]
+        if question and (idea["origin"] == "daily" or payload.get("answered") or payload.get("auto_assume")):
+            # идею дня придумал сам бот, а после ответа/«Реши сам» повторно не спрашиваем
+            assume_note = (f"Не задавай вопросов владельцу. Неясность: «{question}». Выбери самый разумный вариант "
+                           f"сам и прямо напиши в idea_plain, какое допущение сделал и почему.")
+            report["assumptions"] = [question]
+        elif question:
             with db.db() as conn:
                 db.set_idea(conn,idea_id,status="needs_input",stage=question)
-            notify.simple(user_id,f"Нужен один ответ по идее #{idea_id}. {question}\nОтветьте на это сообщение.",
-                          f"question:{idea_id}:{job_id}",idea_id)
+            notify.ask(user_id, idea_id, question, f"question:{idea_id}:{job_id}")
             return
         with db.db() as conn:
             collect_context(conn,idea_id,parsed,report)
@@ -400,12 +406,12 @@ def run_research(job) -> None:
                 upd["region_hint"] = parsed["region_hint"]
             db.set_idea(conn, idea_id, **upd)
             idea = db.get_idea(conn, idea_id, user_id)
-            report["market"] = step_market(ctx, conn, idea, profile, parsed)
+            report["market"] = step_market(ctx, conn, idea, profile, parsed, assume_note)
         with db.db() as conn:
             db.set_idea(conn, idea_id, stage="Подбираю производство и подрядчиков")
         try:
             with db.db() as conn:
-                report["production"] = step_production(ctx, conn, idea, profile, parsed, report["market"])
+                report["production"] = step_production(ctx, conn, idea, profile, parsed, report["market"], assume_note)
         except (llm.BudgetExceeded, jobs.Cancelled):
             raise
         except Exception as e:
@@ -485,8 +491,14 @@ def run_refine(job) -> None:
     if not ver:
         # разбора ещё нет — дополняем ввод и запускаем полное исследование
         with db.db() as conn:
-            db.set_idea(conn, idea_id, input_text=(idea["input_text"] or "") + "\nДополнение: " + text)
-            jobs.enqueue(conn, user_id, "research", idea_id, dedupe_key=f"research:{idea_id}:refine{job_id}")
+            if idea["status"] == "needs_input" and idea["stage"]:
+                extra = f"\nВопрос бота: {idea['stage']}\nОтвет владельца: {text}"
+            else:
+                extra = "\nДополнение: " + text
+            db.set_idea(conn, idea_id, input_text=(idea["input_text"] or "") + extra, status="queued",
+                        stage="Ответ получен, продолжаю исследование")
+            jobs.enqueue(conn, user_id, "research", idea_id, {"answered": True},
+                         dedupe_key=f"research:{idea_id}:refine{job_id}")
         return
     report = db.jload(ver["report"], {})
     econ_inputs = db.jload(ver["econ_inputs"], {})

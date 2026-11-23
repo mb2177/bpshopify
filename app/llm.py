@@ -223,7 +223,7 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
             jobs.check_cancel(ctx.job_id)
             continue
         if resp.stop_reason == "max_tokens":
-            raise ValueError("Ответ превысил лимит длины. Уточните товар или увеличьте глубину исследования.")
+            raise ResponseTooLong("Ответ модели не поместился в лимит длины.")
         break
     text = "\n".join(texts).strip()
     jobs.check_cancel(ctx.job_id)  # поздний ответ после отмены не сохраняем
@@ -250,8 +250,29 @@ def extract_json(text: str):
     raise ValueError("В ответе модели нет JSON")
 
 
+class ResponseTooLong(ValueError):
+    """Модель упёрлась в max_tokens — ответ оборван."""
+
+
+COMPACT_NOTE = ("\n\nВАЖНО: предыдущий ответ не поместился по длине. Ответь компактнее: каждое текстовое поле — "
+                "1–2 коротких предложения, не больше 3 конкурентов и 3 сигналов спроса на рынок, не больше 5 источников. "
+                "Схема JSON та же.")
+
+
 def json_call(ctx: Ctx, step: str, system: str, user_content, **kw):
-    text = call(ctx, step, system, user_content, **kw)
+    try:
+        text = call(ctx, step, system, user_content, **kw)
+    except ResponseTooLong:
+        # один повтор с просьбой ответить короче и с бо́льшим запасом длины (поиск — не больше одного)
+        if isinstance(user_content, str):
+            compact = user_content + COMPACT_NOTE
+        else:
+            compact = list(user_content) + [{"type": "text", "text": COMPACT_NOTE}]
+        kw2 = dict(kw)
+        kw2["max_tokens"] = int(kw.get("max_tokens", 4000) * 1.5)
+        if kw.get("search"):
+            kw2["max_searches"] = 1
+        text = call(ctx, step + ":compact", system, compact, **kw2)
     if not text:
         raise LLMUnavailable("Модель не вернула результат. Продолжение сохранено для повторного запуска.")
     try:

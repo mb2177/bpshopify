@@ -40,7 +40,8 @@ def _release(dedupe_key: str):
         conn.execute("DELETE FROM notifications WHERE dedupe_key=?", (dedupe_key,))
 
 
-def send(user_id: int, text: str, dedupe_key: str, idea_id: int | None = None, url_button: tuple | None = None):
+def send(user_id: int, text: str, dedupe_key: str, idea_id: int | None = None, url_button: tuple | None = None,
+         buttons: list | None = None):
     chat = _chat(user_id)
     if not chat or not config.TELEGRAM_BOT_TOKEN:
         return None
@@ -49,11 +50,17 @@ def send(user_id: int, text: str, dedupe_key: str, idea_id: int | None = None, u
     payload = {"chat_id": chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
     if url_button:
         payload["reply_markup"] = {"inline_keyboard": [[{"text": url_button[0], "url": url_button[1]}]]}
+    if buttons:
+        payload["reply_markup"] = {"inline_keyboard": buttons}
     try:
         try:
             msg = _api("sendMessage", payload)
         except RuntimeError as e:
-            if url_button and "url" in str(e).lower():  # Telegram не принимает адрес (например, без домена)
+            if buttons and "url" in str(e).lower():  # без публичного адреса оставляем только кнопки-действия
+                kept = [[b for b in row if "url" not in b] for row in buttons]
+                payload["reply_markup"] = {"inline_keyboard": [row for row in kept if row]}
+                msg = _api("sendMessage", payload)
+            elif url_button and "url" in str(e).lower():  # Telegram не принимает адрес (например, без домена)
                 payload.pop("reply_markup", None)
                 payload["text"] = text + f"\n\n{html.escape(url_button[1])}"
                 msg = _api("sendMessage", payload)
@@ -145,6 +152,24 @@ def explain(sc: dict, report: dict) -> str:
 def answer(user_id: int, idea_id: int, text: str, dedupe_key: str):
     send(user_id, f"💬 Идея #{idea_id}\n{html.escape(text)}", dedupe_key, idea_id,
          ("📊 Полный разбор", idea_link(idea_id)))
+
+
+def origin_label(idea) -> str:
+    return "идея дня, её выбрал бот" if idea["origin"] == "daily" else "ваша идея"
+
+
+def ask(user_id: int, idea_id: int, question: str, dedupe_key: str):
+    """Вопрос до платного исследования — с контекстом и кнопкой «Реши сам»."""
+    with db.db() as conn:
+        idea = conn.execute("SELECT * FROM ideas WHERE id=?", (idea_id,)).fetchone()
+    if not idea:
+        return
+    text = (f"❓ Идея #{idea_id} «{html.escape(idea['title'] or '')}» ({origin_label(idea)})\n\n"
+            f"Прежде чем тратить деньги на поиск, уточню одно:\n<b>{html.escape(question)}</b>\n\n"
+            f"Ответьте на это сообщение или нажмите «Реши сам» — тогда я выберу самый разумный вариант и напишу, что предположил.")
+    send(user_id, text, dedupe_key, idea_id,
+         buttons=[[{"text": "🤖 Реши сам", "callback_data": f"auto:{idea_id}"}],
+                  [{"text": "📊 Открыть идею", "url": idea_link(idea_id)}]])
 
 
 def simple(user_id: int, text: str, dedupe_key: str, idea_id: int | None = None):
