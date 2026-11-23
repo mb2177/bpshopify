@@ -42,6 +42,8 @@ sleep 5
 docker compose ps
 echo "== Проверка сайта"
 curl -fsS -o /dev/null -w "HTTP %{http_code}\n" -H "Host: ${SITE_ADDRESS_VAL:-localhost}" http://127.0.0.1/login || (docker compose logs --tail=80; exit 1)
+docker compose exec -T web python -m app.smoke
 sleep 20
 echo "== Caddy (сертификат):"
 docker compose logs --tail=25 caddy | grep -iE "certificate|obtain|error|tls" | tail -10 || true
+
