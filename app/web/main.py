@@ -239,13 +239,12 @@ def idea_page(request: Request, idea_id: int, v: int | None = None):
         db.jload(ver["econ_results"],{}) if ver else {},db.jload(ver["scoring"],{}) if ver else {})
     with db.db() as conn:
         feedback = db.feedback(conn,u["id"],idea_id)
-        progress = {r["step_key"]:dict(r) for r in conn.execute("SELECT * FROM project_progress WHERE idea_id=?",(idea_id,))}
         spend = conn.execute("SELECT COALESCE(SUM(u.cost_usd),0) n FROM usage u JOIN jobs j ON j.id=u.job_id WHERE j.idea_id=? AND u.user_id=?",
                              (idea_id,u["id"])).fetchone()["n"]
         settings = db.get_settings(conn,u["id"])
         refreshed = conn.execute("SELECT last_ok_at FROM source_checks WHERE source=?",(f"idea:{idea_id}:refresh",)).fetchone()
     return render(request, "idea.html", idea=idea, ver=ver, versions=versions, evidence=evidence, qa=qa, job=job,
-                  feedback=feedback,progress=progress,research_spend=spend,settings=settings,
+                  feedback=feedback,research_spend=spend,settings=settings,
                   explanation=explanation,feedback_rule_options=memory.RULES,
                   last_refresh=refreshed["last_ok_at"] if refreshed else None,
                   report=report, mrep=report.get("market") or {}, prod=report.get("production") or {},
@@ -553,33 +552,6 @@ def idea_production(request: Request,idea_id: int,market: str = Form(...),option
         research.finalize(conn,idea_id,u["id"],db.jload(version["report"],{}),inputs,"Выбор производства",
                           f"Выбран {option} для {market}",bool(db.jload(version["report"],{}).get("partial")))
     return go(f"/ideas/{idea_id}#production")
-
-
-@app.post("/ideas/{idea_id}/plan/{step_key}")
-def idea_plan(request: Request,idea_id: int,step_key: str,status: str = Form(...),note: str = Form(""),
-              actual_cost: str = Form(""),csrf_token: str = Form(...)):
-    u = need_user(request)
-    csrf(request,csrf_token)
-    if status not in ("planned","active","done","stopped"):
-        raise HTTPException(400)
-    with db.db() as conn:
-        if not db.get_idea(conn,idea_id,u["id"]):
-            raise HTTPException(404)
-        version = db.latest_version(conn,idea_id)
-        report = db.jload(version["report"],{}) if version else {}
-        keys = {step["key"] for step in report.get("test_plan",{}).get("steps",[])}
-        if step_key not in keys:
-            raise HTTPException(400)
-        try:
-            cost = float(actual_cost.replace(",",".")) if actual_cost.strip() else None
-        except ValueError:
-            raise HTTPException(400,"Проверьте сумму")
-        if cost is not None and (not math.isfinite(cost) or cost<0):
-            raise HTTPException(400,"Проверьте сумму")
-        conn.execute("INSERT INTO project_progress VALUES(?,?,?,?,?,?) ON CONFLICT(idea_id,step_key) DO UPDATE SET "
-                     "status=excluded.status,note=excluded.note,actual_cost=excluded.actual_cost,updated_at=excluded.updated_at",
-                     (idea_id,step_key,status,note[:3000],cost,db.now_iso()))
-    return go(f"/ideas/{idea_id}#plan")
 
 
 @app.get("/media/{user_id}/{name}")

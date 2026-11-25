@@ -6,7 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from contextlib import nullcontext
 
-from . import config, db, economics, jobs, llm, notify, prompts, scoring, sources, selection, plans, analytics, memory, basis
+from . import config, db, economics, jobs, llm, notify, prompts, scoring, sources, selection, analytics, memory, basis
 
 OWNER_SET = "Задано владельцем"
 
@@ -317,7 +317,7 @@ def finalize(conn, idea_id: int, user_id: int, report: dict, econ_inputs: dict, 
         econ = economics.compute(econ_inputs)
         sc = scoring.evaluate(report.get("market") or {}, econ, profile)
         report["schema_version"] = 3
-        report["test_plan"] = plans.build(report,econ,profile,sc)
+        report.pop("test_plan",None)
         report["basis"] = basis.build(report,econ,sc)
         v = db.save_version(conn, idea_id, report, econ_inputs, econ, sc, change_request, change_summary)
         title = (report.get("market") or {}).get("title")

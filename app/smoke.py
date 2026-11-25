@@ -65,7 +65,7 @@ def main():
         assert f'action="/ideas/{idea["id"]}/feedback"' in page.text, "Feedback form missing"
         assert 'id="panel-basis"' in page.text or not idea["current_version"], "Evidence summary tab missing"
         if idea["current_version"]:
-            assert 'id="panel-plan"' in page.text, "Test plan missing"
+            assert 'id="panel-plan"' not in page.text, "Removed test plan still visible"
             oldest = client.get(f"/ideas/{idea['id']}?v=1")
             assert oldest.status_code == 200, "Old report no longer renders"
         invalid = client.post(f"/ideas/{idea['id']}/feedback", data={

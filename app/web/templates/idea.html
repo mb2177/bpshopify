@@ -103,7 +103,6 @@
   <span class="gap"></span>
   <button data-tab="production">Производство</button>
   <button data-tab="data">Данные</button>
-  <button data-tab="plan">План теста</button>
   <button data-tab="history">История</button>
 </div>
 
@@ -427,29 +426,6 @@
 </div>
 
 {# ---------- история ---------- #}
-<div class="panel" id="panel-plan">
- <div class="surface">
-  <section class="sec">
-    {% set plan = report.get('test_plan') or {} %}
-    <h2>План теста на 30 дней</h2>
-    {% if plan.get('phase')=='preparation' %}<p class="notice n-warn">Сначала подтвердите условия запуска. Отсчёт теста начнётся после подготовки.</p>{% endif %}
-    <p class="small muted">{{ plan.get('assumptions') }}{% if plan.get('earliest_sales_date') %} Предварительная дата продаж {{ plan.earliest_sales_date }}.{% endif %}</p>
-    <p>Лимит потерь на тест {{ money(plan.get('budget_limit_usd'),'USD') }}. <a href="/settings#profile">Изменить в профиле</a></p>
-    {% for step in plan.get('steps') or [] %}{% set state = progress.get(step.key,{}) %}
-    <div style="padding:18px 0;border-top:1px solid var(--line)">
-      <h3>{{ step.action }}</h3><p class="small muted">{{ step.owner }} · {{ step.deadline }} · оценка расходов {{ money(step.estimated_cost,step.currency) }}</p>
-      <p>{{ step.success_criterion }}</p><p class="small">{{ step.stop_criterion }}</p>
-      {% if step.depends_on %}<p class="small muted">После завершения {% for dependency in step.depends_on %}{% for previous in plan.steps if previous.key==dependency %}{{ previous.action }}{% endfor %}{% endfor %}</p>{% endif %}
-      <form method="post" action="/ideas/{{ idea.id }}/plan/{{ step.key }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        <div class="grid g3"><div><label>Состояние</label><select name="status">{% for key,label in [('planned','Запланировано'),('active','В работе'),('done','Готово'),('stopped','Остановлено')] %}<option value="{{ key }}" {{ 'selected' if state.get('status','planned')==key }}>{{ label }}</option>{% endfor %}</select></div><div><label>Фактические расходы, USD</label><input name="actual_cost" inputmode="decimal" value="{{ state.actual_cost if state.get('actual_cost') is not none else '' }}"></div></div>
-        <label>Результат и решение</label><textarea name="note" style="min-height:60px">{{ state.get('note','') }}</textarea><button class="btn sm" style="margin-top:8px">Сохранить результат</button>
-      </form>
-    </div>{% else %}<p>План появится после пересчёта сохранённых данных.</p>{% endfor %}
-  </section>
- </div>
-</div>
-
 <div class="panel" id="panel-basis">
  <div class="surface"><section class="sec">
   <h2>На чём основан ответ</h2>
