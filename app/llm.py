@@ -39,8 +39,10 @@ def _client():
     return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, max_retries=0, timeout=600)
 
 
-def _prices(model: str):
+def _prices(model: str, input_tokens=0):
     if model == config.MODEL_FAST:
+        if "haiku-5-5" in model and input_tokens>100_000:
+            return config.PRICE_FAST_LONG_IN, config.PRICE_FAST_LONG_OUT
         return config.PRICE_FAST_IN, config.PRICE_FAST_OUT
     if model == config.MODEL_DEEP:
         return config.PRICE_DEEP_IN, config.PRICE_DEEP_OUT
@@ -88,11 +90,12 @@ def _record(ctx: Ctx, model: str, resp, step=None, checkpoint=None, reservation_
     out_tok = getattr(u, "output_tokens", 0) or 0
     stu = getattr(u, "server_tool_use", None)
     searches = (getattr(stu, "web_search_requests", 0) or 0) if stu else 0
-    pin, pout = _prices(model)
+    pin, pout = _prices(model,in_tok)
     read = getattr(u, "cache_read_input_tokens", 0) or 0
     write = getattr(u, "cache_creation_input_tokens", 0) or 0
     normal = getattr(u, "input_tokens", 0) or 0
-    cost = (normal + read * 0.1 + write * 1.25) / 1e6 * pin + out_tok / 1e6 * pout + searches * config.PRICE_PER_SEARCH
+    read_factor = 0.05 if "sonnet-5-5" in model or "opus-5-5" in model else 0.1
+    cost = (normal + read * read_factor + write * 1.25) / 1e6 * pin + out_tok / 1e6 * pout + searches * config.PRICE_PER_SEARCH
     with db.db() as conn, db.tx(conn):
         db.add_usage(conn, ctx.user_id, ctx.job_id, "anthropic", model, in_tok, out_tok, searches, cost, step)
         if checkpoint is not None and ctx.job_id:
@@ -141,8 +144,9 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
         return text
 
     model = model or config.MODEL_RESEARCH
+    effort = ("low" if model==config.MODEL_FAST else "medium") if model.endswith("-5-5") else None
     search_contract = {"type":config.WEB_SEARCH_TOOL,"allowed_callers":["direct"],"location":user_location} if search else None
-    digest = hashlib.sha256(db.jdump([system,user_content,model,search,max_tokens,max_searches,search_contract]).encode()).hexdigest()
+    digest = hashlib.sha256(db.jdump([system,user_content,model,search,max_tokens,max_searches,search_contract,effort]).encode()).hexdigest()
     cache_key = f"llm:{ctx.user_id}:{digest}"
     shared = None if ctx.force_fresh else db.cache_get(cache_key)
     if shared:
@@ -176,7 +180,6 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
             raise jobs.RestartRequested()
         check_budget(ctx)
         jobs.check_cancel(ctx.job_id)
-        pin,pout = _prices(model)
         if search:
             input_reserve = config.SEARCH_INPUT_RESERVE_TOKENS
         else:
@@ -193,11 +196,14 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
                         else:
                             text_size += len(db.jdump(block))
             input_reserve = max(1000,text_size+image_tokens)
+        pin,pout = _prices(model,input_reserve)
         estimate = input_reserve / 1e6 * pin + max_tokens / 1e6 * pout
         estimate += (max_searches or config.WEB_SEARCH_MAX_USES) * config.PRICE_PER_SEARCH if search else 0
         reservation_key = f"{ctx.job_id}:{step}:{uuid.uuid4().hex}"
         reserve(ctx, estimate, reservation_key)
         kwargs = dict(model=model, max_tokens=max_tokens, system=system, messages=messages)
+        if effort:
+            kwargs["output_config"] = {"effort":effort}
         if tools:
             kwargs["tools"] = tools
             remaining_searches = (max_searches or config.WEB_SEARCH_MAX_USES)-searches_used

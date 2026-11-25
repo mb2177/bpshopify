@@ -67,7 +67,9 @@ def snapshot():
         "telegram_connected":bool(user["tg_chat_id"]),"schedule":{key:settings.get(key) for key in
             ("daily_enabled","daily_time","timezone","per_idea_budget_usd","monthly_budget_usd","require_analytics")},
         "profile_fields_filled":[key for key,value in profile.items() if value not in (None,"")],
-        "ideas":ideas,"jobs":jobs,"failures":failures,"totals":totals,"recent_call_status":calls}
+        "ideas":ideas,"jobs":jobs,"failures":failures,"totals":totals,"recent_call_status":calls,
+        "pricing":{"fast_model":config.MODEL_FAST,"fast_input_per_million":config.PRICE_FAST_IN,
+            "fast_output_per_million":config.PRICE_FAST_OUT,"research_model":config.MODEL_RESEARCH}}
 
 
 if __name__=="__main__":

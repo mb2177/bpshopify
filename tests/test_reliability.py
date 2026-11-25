@@ -208,3 +208,57 @@ def test_real_provided_pages_are_retained_as_evidence(owner,monkeypatch):
     with db.db() as conn:
         report=db.jload(db.latest_version(conn,idea_id)["report"])
     assert any(row.get("origin")=="provided_page" and row["url"]=="https://supplier.test/kit" for row in report["seen_sources"])
+
+
+def test_daily_origin_is_explicit_in_model_input_and_not_attributed_to_owner(owner):
+    with db.db() as conn:
+        idea_id=db.create_idea(conn,owner,"daily","Washable grip kit")
+        text=research._idea_block(db.get_idea(conn,idea_id,owner))
+    assert "выбрал сам бот" in text and "Владелец этот товар не предлагал" in text
+    assert "вопросы владельцу не задавай" in text
+
+
+def test_haiku_tier_boundary_applies_to_input_and_output(monkeypatch):
+    monkeypatch.setattr(config,"MODEL_FAST","claude-haiku-5-5")
+    monkeypatch.setattr(config,"PRICE_FAST_IN",.1)
+    monkeypatch.setattr(config,"PRICE_FAST_OUT",.5)
+    monkeypatch.setattr(config,"PRICE_FAST_LONG_IN",.5)
+    monkeypatch.setattr(config,"PRICE_FAST_LONG_OUT",2.5)
+    assert llm._prices(config.MODEL_FAST,100000)==(.1,.5)
+    assert llm._prices(config.MODEL_FAST,100001)==(.5,2.5)
+
+
+def test_sonnet_55_cache_read_price_uses_five_percent(owner,monkeypatch):
+    monkeypatch.setattr(config,"MODEL_RESEARCH","claude-sonnet-5-5")
+    monkeypatch.setattr(config,"PRICE_RESEARCH_IN",2)
+    monkeypatch.setattr(config,"PRICE_RESEARCH_OUT",10)
+    usage=NS(input_tokens=0,output_tokens=10,cache_read_input_tokens=1000,
+        cache_creation_input_tokens=0,server_tool_use=None)
+    with db.db() as conn:
+        identifier=jobs.enqueue(conn,owner,"research")
+    llm._record(llm.Ctx(owner,identifier),config.MODEL_RESEARCH,NS(usage=usage))
+    with db.db() as conn:
+        assert db.job_spend(conn,identifier)==pytest.approx(.0002)
+
+
+def test_asking_about_idea_number_does_not_create_a_new_product(owner):
+    with db.db() as conn:
+        idea_id=db.create_idea(conn,owner,"daily","Kit")
+    for text in (f"Идея #{idea_id}?",f"Что с идеей {idea_id}?",f"#{idea_id}"):
+        msg=message(text)
+        asyncio.run(bot.route_text(msg,owner,text,[]))
+        assert len(msg.sent)==1 and f"Идея #{idea_id}" in msg.sent[0]
+    with db.db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]==0
+
+
+def test_production_uses_economical_model_and_preserves_explicit_deep_mode(owner,monkeypatch):
+    calls=[]
+    monkeypatch.setattr(llm,"json_call",lambda *args,**kwargs:calls.append(kwargs) or {})
+    with db.db() as conn:
+        idea_id=db.create_idea(conn,owner,"daily","Kit")
+        idea=db.get_idea(conn,idea_id,owner)
+        research.step_production(llm.Ctx(owner),conn,idea,{}, {},{})
+        research.step_production(llm.Ctx(owner,research_model=config.MODEL_DEEP),conn,idea,{}, {},{})
+    assert calls[0]["model"]==config.MODEL_FAST
+    assert calls[1]["model"]==config.MODEL_DEEP

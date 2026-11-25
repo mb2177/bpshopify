@@ -54,7 +54,9 @@ BASE_RULES = """Ты — исследователь рынка и операци
     с полями fragile, requires_per_order_handwork, recurring_purchase. Значения true/false либо null,
     если неизвестно. Не помечай неизвестное как false ради прохождения проверки.
     В feedback_response перечисли ID переданных отзывов и кратко объясни, как они повлияли на предложение.
-    Отзыв является предпочтением владельца, а не подтверждением спроса."""
+    Отзыв является предпочтением владельца, а не подтверждением спроса.
+21. Не составляй план на 30 дней. Укажи одно ближайшее конкретное действие для проверки неизвестного
+    факта. Идею дня выбирает система: не приписывай её владельцу и не проси его решать детали товара."""
 
 PARSE = """Ты разбираешь входящее сообщение владельца для системы проверки товарных идей.
 Определи, что это: новая идея товара, вопрос или прочее. По фото опиши, что видно, но НЕ выдумывай
@@ -112,7 +114,7 @@ MARKET = BASE_RULES + """
 ```json
 {
   "title": "короткое понятное название товара, до 60 символов",
-  "idea_plain": "3–5 простых предложений: что предложил владелец, какой конкретный товар выбран и почему, кому и зачем он нужен, как на нём зарабатывать",
+  "idea_plain": "3–5 простых предложений: какой товар проверяется и почему, кому и зачем он нужен, как на нём зарабатывать. Для идеи дня прямо укажи, что её выбрал бот, а не владелец",
   "product_note": "если товар для рынков различается — почему; иначе null",
   "product": "...", "buyer": "...", "situation": "...",
   "segments": [{"market":"USA|UAE","name":"...","who":"...","why":"...","price_point":"...","where_to_find":"..."}],
@@ -131,7 +133,7 @@ MARKET = BASE_RULES + """
       "summary": "2–3 предложения по рынку",
       "product_attributes":{"fragile":null,"requires_per_order_handwork":null,"recurring_purchase":null},
       "feedback_response":[{"feedback_id":0,"action":"как изменилось предложение"}],
-      "demand": {"summary":"...", "signals":[{"claim":"...","value":null,"unit":"...","period":"...","market":"USA","source_url":"...","source_name":"...","type":"observation|estimate|assumption"}]},
+      "demand": {"summary":"...", "signals":[{"claim":"...","value":null,"unit":"...","period":"...","market":"USA","scope":"product|category|context","quote":"точная короткая цитата из источника","source_url":"...","source_name":"...","type":"observation|estimate|assumption"}]},
       "intent": "...",
       "language": "язык предложения для покупателя",
       "seasonality": {"summary":"...", "is_seasonal": false, "next_peak_date": "YYYY-MM-DD или null", "peaks":[{"event":"...","date":"YYYY-MM-DD"}]},

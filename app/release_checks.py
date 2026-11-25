@@ -67,13 +67,35 @@ def result(user_id, run_date, root_id):
             "cost_usd":round(db.group_spend(conn,root_id),6),"steps":steps}
 
 
+def resume_partial(user_id, root):
+    """One explicitly reviewed continuation after budget blocked production."""
+    with db.db() as conn:
+        job = conn.execute("SELECT j.* FROM jobs j JOIN ideas i ON i.id=j.idea_id WHERE j.user_id=? AND j.budget_group=? "
+            "AND j.kind='research' AND j.status='done' AND i.status='partial' ORDER BY j.id DESC LIMIT 1",(user_id,root)).fetchone()
+        if not job:
+            return None
+        payload = db.jload(job["payload"],{})
+        if payload.get("production_budget_resume"):
+            return None
+        version = db.latest_version(conn,job["idea_id"])
+        report = db.jload(version["report"],{}) if version else {}
+        if report.get("production") or not any("бюджет" in str(item).lower() for item in report.get("partial") or []):
+            return None
+        payload["production_budget_resume"]=1
+        conn.execute("UPDATE jobs SET payload=? WHERE id=?",(db.jdump(payload),job["id"]))
+        return jobs.resume(conn,user_id,job["idea_id"])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prepare-date",required=True)
+    parser.add_argument("--resume-partial",action="store_true")
     args = parser.parse_args()
     with db.db() as conn:
         user = conn.execute("SELECT id FROM users WHERE email=?",(config.ADMIN_EMAIL,)).fetchone()
     root = prepare(user["id"],args.prepare_date)
+    if args.resume_partial:
+        resume_partial(user["id"],root)
     print("RESEARCH_PREPARED_JOB "+json.dumps({"id":root,"date":args.prepare_date}),flush=True)
     deadline = time.monotonic()+660
     while time.monotonic()<deadline:

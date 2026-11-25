@@ -415,6 +415,14 @@ async def route_text(message: Message, uid: int, text: str, media: list):
         text = re.sub(r"@" + re.escape(BOT_USERNAME) + r"\b", "", text or "", flags=re.I).strip()
     if (text or "").strip().lower().strip(".! ") in ("ок", "окей", "спасибо", "понятно", "ясно", "да", "нет", "ok", "thanks") and not media:
         return
+    reference = re.fullmatch(r"\s*(?:(?:а|что\s+(?:с|по))\s+)?(?:иде(?:я|ю|и|е|ей)\s*[№#]?\s*|#)(\d+)\s*[?!]?\s*",text or "",re.I)
+    if reference and not media:
+        with db.db() as conn:
+            idea = db.get_idea(conn,int(reference[1]),uid)
+        if idea:
+            return await explain_question(message,idea)
+        await message.answer("Идея с таким номером не найдена. /ideas — список ваших идей.")
+        return
     key = f"{message.chat.id}:{message.message_id}"
     if message.reply_to_message:
         with db.db() as conn:

@@ -72,7 +72,10 @@ def _evidence_block(conn, idea_id: int, keywords=None, asins=None) -> str:
 
 def _idea_block(idea, parsed: dict | None = None) -> str:
     links = db.jload(idea["input_links"], [])
-    s = [f"Идея владельца (номер #{idea['id']}): {idea['input_text'] or ''}"]
+    origin = ("Идея дня, которую выбрал сам бот. Владелец этот товар не предлагал. "
+              "Самостоятельно выбери комплектацию и размеры, укажи допущения; вопросы владельцу не задавай."
+              if idea["origin"]=="daily" else "Идея владельца")
+    s = [f"{origin} (номер #{idea['id']}): {idea['input_text'] or ''}"]
     if idea["region_hint"]:
         s.append(f"Регион/площадка для поиска конкурентов, указанные владельцем: {idea['region_hint']}")
     if parsed:
@@ -134,7 +137,7 @@ def step_production(ctx, conn, idea, profile, parsed, market_rep, instruction: s
                                      "Итоги исследования рынка: " + db.jdump(summary),
                                      f"Дополнительное указание владельца: {instruction}" if instruction else None]))
     return llm.json_call(ctx, step, prompts.PRODUCTION, text, search=True,max_searches=2,
-                         max_tokens=config.PRODUCTION_MAX_TOKENS, model=ctx.research_model)
+                         max_tokens=config.PRODUCTION_MAX_TOKENS, model=ctx.research_model or config.MODEL_FAST)
 
 
 def step_competitors(ctx, idea, report, region: str, market: str | None, step: str) -> dict:
