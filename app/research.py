@@ -424,6 +424,8 @@ def run_research(job) -> None:
         with db.db() as conn:
             db.set_idea(conn, idea_id, input_links=db.jdump(links))
             idea = db.get_idea(conn, idea_id, user_id)
+    ctx.seen_sources.extend({"url":link["url"],"title":link.get("title"),"origin":"provided_page",
+        "retrieved_at":link.get("retrieved_at")} for link in links if link.get("ok"))
     try:
         parsed = step_parse(ctx, idea)
         report["input"] = parsed
@@ -676,7 +678,7 @@ def run_daily(job) -> None:
         hist = [r["title"] for r in conn.execute(
             "SELECT title FROM ideas WHERE user_id=? ORDER BY id DESC LIMIT 60", (user_id,))]
         existing = conn.execute("SELECT * FROM daily_runs WHERE user_id=? AND run_date=?", (user_id, run_date)).fetchone()
-    if existing:
+    if existing and (existing["idea_id"] or not p.get("selection_retry")):
         return
     with db.db() as conn:
         memory_text = _memory_block(conn,user_id,ctx=ctx)
@@ -687,7 +689,10 @@ def run_daily(job) -> None:
     text = "\n\n".join([_dates_block(), _profile_block(profile),memory_text,
                         "История идей (не повторять косметически): " + "; ".join(hist or ["пусто"])])
     try:
-        res = llm.json_call(ctx, "daily", prompts.DAILY, text, search=True, max_tokens=5000, max_searches=4)
+        step = "daily:source-retry" if p.get("selection_retry") else "daily"
+        if p.get("selection_retry"):
+            ctx.force_fresh = True
+        res = llm.json_call(ctx, step, prompts.DAILY, text, search=True, max_tokens=5000, max_searches=4)
     except llm.BudgetExceeded as e:
         notify.simple(user_id, f"⚠️ Ежедневное исследование {run_date} не выполнено: {e}", f"daily-budget:{run_date}")
         return
@@ -729,7 +734,9 @@ def run_daily(job) -> None:
         idea_id = db.create_idea(conn, user_id, "daily", txt, title=c.get("title"),links=evidence_links)
         for bundle in (c.get("analytics_screen") or {}).get("bundles",[]):
             analytics.save_bundle(conn,idea_id,bundle)
-        conn.execute("INSERT OR IGNORE INTO daily_runs(user_id,run_date,idea_id,summary,candidates,created_at) VALUES(?,?,?,?,?,?)",
+        conn.execute("INSERT INTO daily_runs(user_id,run_date,idea_id,summary,candidates,created_at) VALUES(?,?,?,?,?,?) "
+                     "ON CONFLICT(user_id,run_date) DO UPDATE SET idea_id=excluded.idea_id,summary=excluded.summary,candidates=excluded.candidates "
+                     "WHERE daily_runs.idea_id IS NULL",
                      (user_id, run_date, idea_id, c.get("why"), db.jdump(cands), db.now_iso()))
         jobs.enqueue(conn,user_id,"research",idea_id,{"budget_group":job_id,"daily_date":run_date,
             "remaining_candidates":eligible[1:2],"candidate_attempt":1},dedupe_key=f"research:daily:{user_id}:{run_date}")

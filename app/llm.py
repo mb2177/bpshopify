@@ -141,7 +141,8 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
         return text
 
     model = model or config.MODEL_RESEARCH
-    digest = hashlib.sha256(db.jdump([system,user_content,model,search,max_tokens,max_searches]).encode()).hexdigest()
+    search_contract = {"type":config.WEB_SEARCH_TOOL,"allowed_callers":["direct"],"location":user_location} if search else None
+    digest = hashlib.sha256(db.jdump([system,user_content,model,search,max_tokens,max_searches,search_contract]).encode()).hexdigest()
     cache_key = f"llm:{ctx.user_id}:{digest}"
     shared = None if ctx.force_fresh else db.cache_get(cache_key)
     if shared:
@@ -153,7 +154,7 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
     tools = []
     if search:
         tool = {"type": config.WEB_SEARCH_TOOL, "name": "web_search",
-                "max_uses": max_searches or config.WEB_SEARCH_MAX_USES}
+                "max_uses": max_searches or config.WEB_SEARCH_MAX_USES,"allowed_callers":["direct"]}
         if user_location:
             tool["user_location"] = user_location
         tools.append(tool)
@@ -233,7 +234,7 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
     text = "\n".join(texts).strip()
     jobs.check_cancel(ctx.job_id)  # поздний ответ после отмены не сохраняем
     jobs.store_step(ctx.job_id, step, {"text": text, "sources": ctx.seen_sources[before:]})
-    if text:
+    if text and (not search or ctx.seen_sources[before:]):
         db.cache_put(cache_key,{"text":text,"sources":ctx.seen_sources[before:]},86400)
     return text
 

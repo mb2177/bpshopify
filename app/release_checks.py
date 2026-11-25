@@ -22,8 +22,22 @@ def prepare(user_id, run_date):
         if idea and not conn.execute("SELECT 1 FROM idea_feedback WHERE user_id=? AND comment=?",(user_id,OWNER_FEEDBACK)).fetchone():
             db.save_feedback(conn,user_id,idea["id"],"dislike",OWNER_FEEDBACK,True)
         with db.tx(conn):
-            return jobs.enqueue(conn,user_id,"daily",payload={"date":run_date},
+            root = jobs.enqueue(conn,user_id,"daily",payload={"date":run_date},
                 dedupe_key=f"daily:{user_id}:{run_date}",max_attempts=2)
+            job = conn.execute("SELECT * FROM jobs WHERE id=?",(root,)).fetchone()
+            daily = conn.execute("SELECT * FROM daily_runs WHERE user_id=? AND run_date=?",(user_id,run_date)).fetchone()
+            cache = conn.execute("SELECT result FROM step_cache WHERE job_id=? AND step='daily'",(root,)).fetchone()
+            payload = db.jload(job["payload"],{})
+            # One reviewed retry: real search results existed, but the old dynamic
+            # filtering response falsely said search was unavailable. Retain the
+            # first response and every charge in the original budget group.
+            if (job["status"]=="done" and daily and not daily["idea_id"] and cache and
+                db.jload(cache["result"],{}).get("sources") and not payload.get("selection_retry") and
+                "недоступен" in str(daily["summary"]).lower()):
+                payload["selection_retry"]=1
+                conn.execute("UPDATE jobs SET status='queued',payload=?,attempts=0,error=NULL,finished_at=NULL,run_after=0 WHERE id=?",
+                    (db.jdump(payload),root))
+            return root
 
 
 def result(user_id, run_date, root_id):

@@ -47,7 +47,7 @@ def snapshot():
                 kind=value.get("type")
                 if kind:
                     info["types"][kind]=info["types"].get(kind,0)+1
-                for key in ("error_code","code"):
+                for key in ("error_code",):
                     if value.get(key):
                         info["errors"].append(redact(value[key],uid)[:180])
                 for item in value.values():

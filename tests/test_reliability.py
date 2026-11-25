@@ -155,3 +155,56 @@ def test_old_saved_basis_and_historical_report_still_render(owner):
         page=client.get(path)
         assert page.status_code==200 and 'id="panel-basis"' in page.text
         assert 'id="panel-plan"' not in page.text
+
+
+def test_search_uses_direct_structured_results_with_budget_cap(owner,monkeypatch):
+    monkeypatch.setattr(config,"FAKE_LLM",False)
+    calls=[]
+    def create(**kwargs):
+        calls.append(kwargs)
+        return NS(stop_reason="end_turn",content=[
+            NS(type="web_search_tool_result",content=[NS(type="web_search_result",url="https://source.test/product",title="Product")]),
+            NS(type="text",text='{"ok":true}')],
+            usage=NS(input_tokens=100,output_tokens=20,server_tool_use=NS(web_search_requests=1),
+                cache_read_input_tokens=0,cache_creation_input_tokens=0))
+    monkeypatch.setattr(llm,"_client",lambda:NS(messages=NS(create=create)))
+    with db.db() as conn:
+        identifier=jobs.enqueue(conn,owner,"daily")
+    ctx=llm.Ctx(owner,identifier,per_job_limit=5,monthly_limit=100)
+    assert llm.json_call(ctx,"direct","system","product",search=True,max_searches=3)=={"ok":True}
+    assert calls[0]["tools"][0]["allowed_callers"]==["direct"]
+    assert calls[0]["tools"][0]["max_uses"]==3
+    assert ctx.seen_sources[0]["url"]=="https://source.test/product"
+
+
+def test_reviewed_search_retry_reuses_original_job_and_cost_only_once(owner):
+    identifier=prepare(owner,"2026-11-25")
+    jobs.store_step(identifier,"daily",{"text":"search unavailable","sources":[{"url":"https://source.test"}]})
+    with db.db() as conn:
+        jobs.finish(conn,identifier)
+        conn.execute("INSERT INTO daily_runs(user_id,run_date,summary,candidates,created_at) VALUES(?,?,?,?,?)",
+            (owner,"2026-11-25","Поиск недоступен (лимит)","[]",db.now_iso()))
+        db.add_usage(conn,owner,identifier,"anthropic","test",0,0,4,.18,"daily")
+    assert prepare(owner,"2026-11-25")==identifier
+    with db.db() as conn:
+        row=conn.execute("SELECT * FROM jobs WHERE id=?",(identifier,)).fetchone()
+        assert row["status"]=="queued" and db.jload(row["payload"])["selection_retry"]==1
+        assert db.group_spend(conn,identifier)==.18
+        jobs.finish(conn,identifier)
+    prepare(owner,"2026-11-25")
+    with db.db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]==1
+        assert conn.execute("SELECT status FROM jobs").fetchone()[0]=="done"
+    assert jobs.cached_step(identifier,"daily")["sources"]
+
+
+def test_real_provided_pages_are_retained_as_evidence(owner,monkeypatch):
+    monkeypatch.setattr(sources,"fetch_url_text",lambda url:{"url":url,"ok":True,"title":"Supplier",
+        "text":"A complete kit costs $20.00 USD", "retrieved_at":db.now_iso()})
+    with db.db() as conn:
+        idea_id=db.create_idea(conn,owner,"web","A complete kit",links=[{"url":"https://supplier.test/kit"}])
+        jobs.enqueue(conn,owner,"research",idea_id)
+    assert worker.process_one()
+    with db.db() as conn:
+        report=db.jload(db.latest_version(conn,idea_id)["report"])
+    assert any(row.get("origin")=="provided_page" and row["url"]=="https://supplier.test/kit" for row in report["seen_sources"])
