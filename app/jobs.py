@@ -101,3 +101,25 @@ def active_jobs(conn, user_id: int):
         "SELECT j.*, i.title FROM jobs j LEFT JOIN ideas i ON i.id=j.idea_id "
         "WHERE j.user_id=? AND j.status IN ('queued','running') ORDER BY j.id", (user_id,)).fetchall()
 
+
+def resume(conn, user_id: int, idea_id: int):
+    """Requeue the SAME failed job; retain completed steps, usage and group budget."""
+    with db.tx(conn):
+        idea = db.get_idea(conn,idea_id,user_id)
+        if not idea or idea["status"] not in ("failed","partial","cancelled"):
+            return None
+        if conn.execute("SELECT 1 FROM jobs WHERE idea_id=? AND status IN ('queued','running')",(idea_id,)).fetchone():
+            return None
+        job = conn.execute("SELECT * FROM jobs WHERE idea_id=? AND user_id=? AND kind IN ('research','refine') ORDER BY id DESC LIMIT 1",(idea_id,user_id)).fetchone()
+        if not job or job["status"] not in ("failed","cancelled","done"):
+            return None
+        # Old releases saved a truncated non-search parse as an assistant prefill.
+        # It is not a resumable server-tool pause. Preserve every completed step.
+        for row in conn.execute("SELECT step,result FROM step_cache WHERE job_id=? AND step LIKE 'parse%:pending'",(job["id"],)).fetchall():
+            pending = db.jload(row["result"],{})
+            if not pending.get("done_text") and pending.get("stop_reason")!="pause_turn":
+                conn.execute("DELETE FROM step_cache WHERE job_id=? AND step=?",(job["id"],row["step"]))
+        conn.execute("UPDATE jobs SET status='queued',attempts=0,cancel_requested=0,error=NULL,finished_at=NULL,run_after=0 WHERE id=?",(job["id"],))
+        db.set_idea(conn,idea_id,status="queued",stage="Продолжаю сохранённое исследование")
+        return job["id"]
+

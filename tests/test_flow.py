@@ -230,14 +230,14 @@ def test_daily_idea_never_asks_owner(monkeypatch):
         daily, own = db.get_idea(conn, daily_id, u), db.get_idea(conn, own_id, u)
         rep = db.jload(db.latest_version(conn, daily_id)["report"])
     assert daily["status"] == "ready" and rep["assumptions"] == ["Только этикетки или ещё крышки?"]
-    assert own["status"] == "needs_input" and len(asked) == 1 and asked[0][1] == own_id
+    assert own["status"] == "ready" and not asked
     # ответ владельца продолжает исследование и больше не спрашивает
     with db.db() as conn:
         jobs.enqueue(conn, u, "refine", own_id, {"text": "только этикетки"}, dedupe_key=f"ans:{own_id}")
     drain()
     with db.db() as conn:
         own = db.get_idea(conn, own_id, u)
-    assert own["status"] == "ready" and "Ответ владельца: только этикетки" in own["input_text"] and len(asked) == 1
+    assert own["status"] == "ready" and not asked
 
 
 def test_confused_reply_detection():

@@ -158,6 +158,8 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
             tool["user_location"] = user_location
         tools.append(tool)
     pending = jobs.cached_step(ctx.job_id, step + ":pending") or {}
+    if pending.get("stop_reason")=="max_tokens":
+        raise ResponseTooLong("Предыдущий ответ оборвался по длине; нужен компактный повтор.")
     searches_used = int(pending.get("searches_used",0))
     if pending.get("done_text"):
         ctx.seen_sources.extend(pending.get("sources", []))
@@ -216,6 +218,7 @@ def call(ctx: Ctx, step: str, system: str, user_content, *, model: str | None = 
         content = json.loads(json.dumps(resp.content, default=lambda obj: obj.model_dump(mode="json") if hasattr(obj,"model_dump") else vars(obj)))
         texts = [b.text for b in resp.content if getattr(b,"type",None)=="text"]
         checkpoint = {"messages":messages + [{"role":"assistant","content":content}],
+                      "stop_reason":resp.stop_reason,
                       "searches_used":searches_used,
                       "sources":ctx.seen_sources[before:],
                       "done_text":"\n".join(texts).strip() if resp.stop_reason=="end_turn" else None}

@@ -2,6 +2,8 @@
 import csv
 import io
 import re
+import unicodedata
+import math
 from datetime import datetime, timedelta, date
 from statistics import mean
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
@@ -18,6 +20,11 @@ from . import config, db
 
 class SourceNeedsConnection(RuntimeError):
     pass
+
+
+def _quote_text(value):
+    text = unicodedata.normalize("NFKC",str(value or "")).casefold()
+    return " ".join(text.translate(str.maketrans({"’":"'","‘":"'","“":'"',"”":'"'})).split())
 
 
 def canonical_url(value: str | None) -> str:
@@ -140,14 +147,14 @@ def validate_evidence(report: dict, manual_rows: list) -> None:
                 continue
             url = canonical_url(gate.get("source_url"))
             page = documents.get(url,{})
-            quote = " ".join(str(gate.get("quote") or "").lower().split())
-            text = " ".join(page.get("text","").lower().split())
+            quote = _quote_text(gate.get("quote"))
+            text = _quote_text(page.get("text"))
             gate["verified"] = bool(url and url in known and len(quote)>=15 and quote in text)
         for signal in (market.get("demand") or {}).get("signals",[]):
             url = canonical_url(signal.get("source_url"))
             page = documents.get(url,{})
-            quote = " ".join(str(signal.get("quote") or "").lower().split())
-            text = " ".join(page.get("text","").lower().split())
+            quote = _quote_text(signal.get("quote"))
+            text = _quote_text(page.get("text"))
             signal["verified"] = bool(url and signal.get("market")==mk and
                                       (url in owner or (url in known and len(quote)>=20 and quote in text)))
             signal["retrieved_at"] = page.get("retrieved_at")
@@ -158,11 +165,16 @@ def validate_evidence(report: dict, manual_rows: list) -> None:
             url = canonical_url(competitor.get("url"))
             page = documents.get(url,{})
             price = str(competitor.get("price") or "")
-            quote = " ".join(str(competitor.get("price_quote") or "").lower().split())
-            text = " ".join(page.get("text","").lower().split())
+            quote = _quote_text(competitor.get("price_quote"))
+            text = _quote_text(page.get("text"))
             price_variants = {price,price.replace(".",","),price.removesuffix(".0")}
-            competitor["verified"] = bool(url and (url in owner or
-                (url in known and page.get("ok") and price and len(quote)>=5 and quote in text and any(p in quote for p in price_variants))))
+            valid_price = isinstance(competitor.get("price"),(int,float)) and not isinstance(competitor.get("price"),bool) and math.isfinite(competitor["price"]) and competitor["price"]>0
+            if valid_price:
+                price_variants.update((f"{competitor['price']:.2f}",f"{competitor['price']:.2f}".replace(".",",")))
+            quoted_price = any(re.search(r"(?<![\d.,])"+re.escape(p)+r"(?![\d.,])",quote) for p in price_variants if p)
+            right_market = competitor.get("market")==mk and competitor.get("currency")=={"USA":"USD","UAE":"AED"}.get(mk)
+            competitor["verified"] = bool(valid_price and right_market and url and (url in owner or
+                (url in known and page.get("ok") and price and len(quote)>=5 and quote in text and quoted_price)))
             competitor["retrieved_at"] = page.get("retrieved_at")
     report["source_validation"] = {"checked_at":db.now_iso(),"pages_checked":len(pages),
                                    "readable_pages":sum(bool(p.get("ok")) for p in pages)}

@@ -18,6 +18,7 @@ IDEA_HINTS = ("провер", "иде", "товар", "продава", "ниш"
 
 dp = Dispatcher()
 album_tasks: dict[str, asyncio.Task] = {}
+BOT_USERNAME = ""
 
 
 # ---------- инфраструктура ----------
@@ -25,6 +26,10 @@ album_tasks: dict[str, asyncio.Task] = {}
 class DedupeMiddleware(BaseMiddleware):
     """Повторно доставленное событие Telegram не обрабатывается второй раз."""
     async def __call__(self, handler, event: Update, data):
+        item = event.message or event.callback_query
+        actor = getattr(item, "from_user", None)
+        if actor is None or actor.is_bot:
+            return None
         try:
             with db.db() as conn:
                 conn.execute("INSERT INTO tg_updates(update_id,received_at) VALUES(?,?)", (event.update_id, db.now_iso()))
@@ -43,6 +48,8 @@ def owner_of(chat_id: int):
 
 
 async def guard(message: Message):
+    if not message.from_user or message.from_user.is_bot:
+        return None
     uid = owner_of(message.chat.id)
     if not uid:
         await message.answer("🔒 Доступ закрыт. Владелец привязывает бота кодом с сайта: Настройки → Telegram → "
@@ -114,12 +121,24 @@ async def start_idea(message: Message, user_id: int, text: str, media: list, ded
 
 
 async def start_refine(message: Message, user_id: int, idea_id: int, text: str, dedupe: str):
+    busy = False
     with db.db() as conn:
         idea = db.get_idea(conn, idea_id, user_id)
         if not idea:
             await message.answer("Не нашёл эту идею.")
             return
-        jobs.enqueue(conn, user_id, "refine", idea_id, {"text": text}, dedupe_key=dedupe)
+        if is_confused(text):
+            return await explain_question(message,idea)
+        with db.tx(conn):
+            busy = conn.execute("SELECT 1 FROM jobs WHERE idea_id=? AND status IN ('queued','running')", (idea_id,)).fetchone()
+            exists = conn.execute("SELECT 1 FROM jobs WHERE dedupe_key=?", (dedupe,)).fetchone()
+            if exists:
+                return
+            if not busy:
+                jobs.enqueue(conn, user_id, "refine", idea_id, {"text": text}, dedupe_key=dedupe)
+    if busy:
+        await message.answer(f"Идея #{idea_id} уже обрабатывается. Результат появится в её карточке.")
+        return
     msg = await message.answer(f"✏️ Идея #{idea_id}: принял уточнение. Обновлю только нужные разделы и пришлю ссылку.")
     map_msg(message.chat.id, msg.message_id, idea_id)
 
@@ -127,6 +146,31 @@ async def start_refine(message: Message, user_id: int, idea_id: int, text: str, 
 def looks_like_idea(text: str) -> bool:
     t = (text or "").lower()
     return bool(URL_RE.search(t)) or len(t) >= 40 or any(h in t for h in IDEA_HINTS)
+
+
+def mode_key(message, uid, actor=None):
+    actor = actor or message.from_user
+    return f"mode:{uid}:{message.chat.id}:{actor.id}"
+
+
+def intended_for_bot(message, uid):
+    """Group chatter and messages from bots must never become paid research."""
+    if not message.from_user or message.from_user.is_bot:
+        return False
+    if message.chat.type == "private":
+        return True
+    text = (message.text or message.caption or "").strip().lower()
+    if text.startswith("/") or re.match(r"^(?:идея\s*:|проверь\b|разбери\b|проанализируй\b|оцени\b)", text):
+        return True
+    if BOT_USERNAME and re.search(r"@" + re.escape(BOT_USERNAME) + r"\b", text, re.I):
+        return True
+    if pending_get(mode_key(message,uid), uid):
+        return True
+    if message.reply_to_message:
+        with db.db() as conn:
+            return bool(conn.execute("SELECT 1 FROM tg_message_map WHERE chat_id=? AND message_id=?",
+                (message.chat.id, message.reply_to_message.message_id)).fetchone())
+    return False
 
 
 async def download(bot: Bot, file_id: str, user_id: int, name: str) -> str:
@@ -155,7 +199,8 @@ async def cmd_start(message: Message, command: CommandObject):
         return
     await message.answer(
         "👋 Бот подключён.\n\nПросто пришлите идею: текст, ссылку, фото или голосовое. Например:\n"
-        "«Проверь идею: кастомные футболки для свадеб, конкуренты в Дубае».\n\n"
+        "«Проверь идею: наборы для регулярного ухода за комнатными растениями, рынок США».\n\n"
+        "В группе начинайте с /new или «Проверь идею:», упомяните бота либо ответьте на сообщение об идее.\n"
         "Я сразу подтвержу приём, а когда разбор будет готов — пришлю оценку /10 и ссылку на полный разбор на сайте.\n"
         "Чтобы уточнить идею — ответьте (reply) на моё сообщение о ней.\n\n/help — все команды")
 
@@ -166,6 +211,7 @@ async def cmd_help(message: Message):
         return
     await message.answer(
         "Как пользоваться:\n• Пришлите идею текстом, ссылкой, фото или голосом.\n"
+        "• В группе: /new, «Идея:», «Проверь…», упоминание бота или reply к сообщению об идее. Обычная переписка игнорируется.\n"
         "• Ответьте на сообщение об идее, чтобы уточнить: «а если партия 50 шт?», «найди конкурентов в Дубае», "
         "«не хотим покупать оборудование».\n\nКоманды:\n/new текст — точно запустить как новую идею (обычно можно просто написать идею)\n"
         "/ideas — последние идеи\n/status — что сейчас исследуется\n/cancel — остановить исследование\n"
@@ -181,7 +227,7 @@ async def cmd_new(message: Message, command: CommandObject):
     if text:  # «/new идея» одним сообщением — запускаем сразу
         await start_idea(message, uid, text, [], f"tg-idea:{message.chat.id}:{message.message_id}")
         return
-    pending_put(f"mode:{uid}", uid, {"mode": "new"})
+    pending_put(mode_key(message,uid), uid, {"mode": "new"})
     await message.answer("Жду идею: текст, ссылку, фото или голосовое.")
 
 
@@ -267,10 +313,14 @@ def is_confused(text: str) -> bool:
 async def explain_question(message: Message, idea):
     where = ("Её выбрал сам бот в ежедневном поиске (идея дня), вы её не присылали."
              if idea["origin"] == "daily" else "Это ваша идея.")
+    states = {"failed":"Предыдущий разбор не завершился. Продолжить его можно в карточке идеи.",
+        "researching":"Разбор уже выполняется.", "queued":"Разбор находится в очереди.",
+        "needs_input":"Комплектацию и размеры для названного товара бот выбирает самостоятельно."}
     await message.answer(
-        f"Идея #{idea['id']} «{idea['title']}». {where}\n\nПеред платным исследованием мне не хватило одной детали:\n"
-        f"{idea['stage']}\n\nОтветьте на это сообщение или нажмите «Реши сам».",
-        reply_markup=kb([[{"text": "🤖 Реши сам", "callback_data": f"auto:{idea['id']}"}]]))
+        f"Идея #{idea['id']} «{idea['title']}». {where}\n"
+        f"{states.get(idea['status'], 'Результат и основания находятся в карточке идеи.')}\n"
+        f"{config.SITE_URL}/ideas/{idea['id']}\nНового платного исследования это сообщение не запускает.",
+        disable_web_page_preview=True)
 
 
 @dp.callback_query(F.data.startswith("auto:"))
@@ -311,7 +361,7 @@ async def cb_ref(cb: CallbackQuery):
     if not uid:
         return await cb.answer("Нет доступа")
     idea_id = int(cb.data.split(":")[1])
-    pending_put(f"mode:{uid}", uid, {"mode": "refine", "idea_id": idea_id})
+    pending_put(mode_key(cb.message,uid,cb.from_user), uid, {"mode": "refine", "idea_id": idea_id})
     await cb.answer()
     await cb.message.answer(f"Напишите уточнение к идее #{idea_id}.")
 
@@ -358,38 +408,47 @@ async def cb_voice(cb: CallbackQuery):
 # ---------- сообщения ----------
 
 async def route_text(message: Message, uid: int, text: str, media: list):
-    """Решает: новая идея, уточнение или неясно (тогда кнопки, без платного запуска)."""
+    """Only deliberate human requests can create paid jobs."""
+    if not intended_for_bot(message,uid):
+        return
+    if BOT_USERNAME:
+        text = re.sub(r"@" + re.escape(BOT_USERNAME) + r"\b", "", text or "", flags=re.I).strip()
+    if (text or "").strip().lower().strip(".! ") in ("ок", "окей", "спасибо", "понятно", "ясно", "да", "нет", "ok", "thanks") and not media:
+        return
     key = f"{message.chat.id}:{message.message_id}"
     if message.reply_to_message:
         with db.db() as conn:
             row = conn.execute("SELECT idea_id FROM tg_message_map WHERE chat_id=? AND message_id=?",
                                (message.chat.id, message.reply_to_message.message_id)).fetchone()
         if row:
+            with db.db() as conn:
+                idea = db.get_idea(conn, row["idea_id"], uid)
+            if not idea:
+                return
+            if is_confused(text):
+                return await explain_question(message,idea)
             if any(term in text.lower() for term in ("не нравится", "не подходит", "мне нравится", "запомни", "учитывай", "предпочитаем")):
                 rating = "dislike" if any(term in text.lower() for term in ("не нравится","не подходит")) else "revise"
                 with db.db() as conn:
                     db.save_feedback(conn,uid,row["idea_id"],rating,text,True)
                 await message.answer(f"Отзыв к идее #{row['idea_id']} сохранён. Учту причину в следующих идеях. Сохранение бесплатно.")
                 return
-            with db.db() as conn:
-                idea = db.get_idea(conn, row["idea_id"], uid)
-            if idea and idea["status"] == "needs_input" and is_confused(text):
-                return await explain_question(message, idea)
             return await start_refine(message, uid, row["idea_id"], text, f"tg-ref:{key}")
-    mode = pending_take(f"mode:{uid}", uid)
+    mode = pending_get(mode_key(message,uid), uid)
+    if is_confused(text):
+        with db.db() as conn:
+            idea = (db.get_idea(conn,mode["idea_id"],uid) if mode and mode.get("mode")=="refine" else
+                conn.execute("SELECT * FROM ideas WHERE user_id=? AND archived=0 ORDER BY updated_at DESC LIMIT 1",(uid,)).fetchone())
+        if idea:
+            return await explain_question(message,idea)
+        return
+    mode = pending_take(mode_key(message,uid), uid)
     if mode and mode.get("mode") == "refine":
         return await start_refine(message, uid, mode["idea_id"], text, f"tg-ref:{key}")
     if (mode and mode.get("mode") == "new") or media or looks_like_idea(text):
         return await start_idea(message, uid, text, media, f"tg-idea:{key}")
-    with db.db() as conn:
-        last = conn.execute("SELECT id, title FROM ideas WHERE user_id=? AND archived=0 ORDER BY updated_at DESC LIMIT 1",
-                            (uid,)).fetchone()
-    pending_put(f"amb:{key}", uid, {"text": text, "media": media})
-    rows = [[{"text": "🔍 Новая идея", "callback_data": f"amb:new:{key}"}]]
-    if last:
-        rows.append([{"text": f"✏️ К идее #{last['id']} {last['title'][:25]}", "callback_data": f"amb:ref{last['id']}:{key}"}])
-    rows.append([{"text": "Отмена", "callback_data": f"amb:no:{key}"}])
-    await message.answer("Это новая идея или уточнение?", reply_markup=kb(rows))
+    if message.chat.type == "private":
+        await message.answer("Для нового разбора пришлите название товара, фото или ссылку. Отзыв к готовой идее можно оставить ответом на её сообщение.")
 
 
 async def finalize_album(bot: Bot, group_key: str, uid: int, message: Message):
@@ -403,7 +462,8 @@ async def finalize_album(bot: Bot, group_key: str, uid: int, message: Message):
 @dp.message(F.photo)
 async def on_photo(message: Message, bot: Bot):
     uid = await guard(message)
-    if not uid:
+    album_known = uid and message.media_group_id and pending_get(f"album:{message.chat.id}:{message.media_group_id}",uid)
+    if not uid or not (album_known or intended_for_bot(message,uid)):
         return
     ph = message.photo[-1]
     path = await download(bot, ph.file_id, uid, f"{ph.file_unique_id}.jpg")
@@ -424,7 +484,7 @@ async def on_photo(message: Message, bot: Bot):
 @dp.message(F.voice | F.audio)
 async def on_voice(message: Message, bot: Bot):
     uid = await guard(message)
-    if not uid:
+    if not uid or not intended_for_bot(message,uid):
         return
     if not config.OPENAI_API_KEY:
         await message.answer("🎙 Голосовые пока не подключены (нужен ключ расшифровки OPENAI_API_KEY, ≈ $0.006/мин). "
@@ -465,6 +525,7 @@ async def on_text(message: Message):
 
 
 async def main():
+    global BOT_USERNAME
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ensure_admin()
     if not config.TELEGRAM_BOT_TOKEN:
@@ -472,6 +533,7 @@ async def main():
         while True:
             await asyncio.sleep(3600)
     bot = Bot(config.TELEGRAM_BOT_TOKEN)
+    BOT_USERNAME = (await bot.get_me()).username or ""
     await bot.delete_webhook(drop_pending_updates=False)  # используем только polling — без конкуренции с webhook
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 

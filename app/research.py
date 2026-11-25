@@ -26,6 +26,8 @@ def _profile_block(profile: dict) -> str:
         v = profile.get(key)
         lines.append(f"- {label}: {v if v not in (None, '') else 'НЕ УКАЗАНО (не придумывать)'}")
     lines.append(f"Приоритет рынка — {profile.get('market_priority','USA')}. Круглогодичные товары в приоритете.")
+    if profile.get("data_mode"):
+        lines.append(profile["data_mode"])
     return "Профиль владельца:\n" + "\n".join(lines)
 
 
@@ -107,7 +109,7 @@ def make_ctx(conn, user_id: int, job_id: int | None) -> llm.Ctx:
 
 def step_parse(ctx, idea) -> dict:
     content = _image_blocks(idea) + [{"type": "text", "text": _idea_block(idea)}]
-    return llm.json_call(ctx, "parse", prompts.PARSE, content, model=config.MODEL_FAST, max_tokens=1200)
+    return llm.json_call(ctx, "parse", prompts.PARSE, content, model=config.MODEL_FAST, max_tokens=2400)
 
 
 def step_market(ctx, conn, idea, profile, parsed, instruction: str | None = None, step="market") -> dict:
@@ -428,15 +430,18 @@ def run_research(job) -> None:
         payload = db.jload(job["payload"], {})
         assume_note = None
         question = str(parsed.get("critical_question") or "").strip()[:700]
-        if question and (idea["origin"] == "daily" or payload.get("answered") or payload.get("auto_assume")):
+        if question and (idea["origin"] == "daily" or parsed.get("product") or payload.get("answered") or payload.get("auto_assume")):
             # идею дня придумал сам бот, а после ответа/«Реши сам» повторно не спрашиваем
-            assume_note = (f"Не задавай вопросов владельцу. Неясность: «{question}». Выбери самый разумный вариант "
-                           f"сам и прямо напиши в idea_plain, какое допущение сделал и почему.")
+            assume_note = (f"Не задавай вопросов владельцу. Неясность: «{question}». Выбери разумную комплектацию "
+                           "и размер самостоятельно и укажи допущение. Не выдумывай бюджет владельца, наличие компании, "
+                           "подтверждённые платежи, сертификаты или фактические продажи. Эти пробелы оставь неизвестными.")
             report["assumptions"] = [question]
         elif question:
             with db.db() as conn:
-                db.set_idea(conn,idea_id,status="needs_input",stage=question)
-            notify.ask(user_id, idea_id, question, f"question:{idea_id}:{job_id}")
+                db.set_idea(conn,idea_id,status="needs_input",stage="Не удалось определить товар по сообщению")
+            notify.simple(user_id,f"Идея #{idea_id}: в сообщении не удалось определить сам товар. "
+                          "Пришлите название, фото или ссылку на товар. Платное исследование рынка не запускалось.",
+                          f"missing-product:{idea_id}:{job_id}",idea_id)
             return
         with db.db() as conn:
             collect_context(conn,idea_id,parsed,report,ctx)
@@ -492,7 +497,7 @@ def run_research(job) -> None:
         report["seen_sources"] = ctx.seen_sources
         _save_partial(idea_id, user_id, report, f"Остановлено по бюджету: {e}")
         notify.simple(user_id, f"⚠️ Идея #{idea_id}: {e}\nСохранена частичная версия. Поднимите лимит в настройках "
-                               f"и нажмите «Обновить разбор» на сайте.", f"budget:{idea_id}:{job_id}")
+                               f"и нажмите «Продолжить сохранённый разбор» на сайте.", f"budget:{idea_id}:{job_id}")
     except llm.LLMUnavailable as e:
         with db.db() as conn:
             db.set_idea(conn, idea_id, status="failed", stage=str(e))
@@ -595,7 +600,7 @@ def run_refine(job) -> None:
                 clarified["input_text"] = "Текущий товар: " + str((report.get("market") or {}).get("product") or idea["input_text"]) + "\nУточнение владельца: " + text
                 parsed = step_parse(ctx,clarified)
                 if parsed.get("critical_question"):
-                    if idea["origin"]=="daily":
+                    if idea["origin"]=="daily" or parsed.get("product"):
                         instr += "\nИдея дня: выбери разумный вариант самостоятельно и явно укажи допущение. " + str(parsed["critical_question"])
                         parsed["critical_question"] = None
                     else:
@@ -676,11 +681,8 @@ def run_daily(job) -> None:
     with db.db() as conn:
         memory_text = _memory_block(conn,user_id,ctx=ctx)
         settings = db.get_settings(conn,user_id)
-        if settings.get("require_analytics") and not config.FAKE_LLM and not analytics.credentials.ready(user_id,"dataforseo"):
-            reason = "Для аналитического отбора идеи дня подключите DataForSEO в разделе Источники. Платная генерация до подключения приостановлена."
-            conn.execute("INSERT OR IGNORE INTO daily_runs(user_id,run_date,summary,candidates,created_at) VALUES(?,?,?,?,?)",
-                         (user_id,run_date,reason,"[]",db.now_iso()))
-            return
+        if not analytics.credentials.ready(user_id,"dataforseo"):
+            profile["data_mode"] = "Предварительный разбор по проверяемым публичным источникам. Объёмы Trends, Google/Bing отсутствуют. Не придумывай их."
     profile["market_priority"] = settings["market_priority"]
     text = "\n\n".join([_dates_block(), _profile_block(profile),memory_text,
                         "История идей (не повторять косметически): " + "; ".join(hist or ["пусто"])])

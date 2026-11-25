@@ -243,8 +243,9 @@ def idea_page(request: Request, idea_id: int, v: int | None = None):
                              (idea_id,u["id"])).fetchone()["n"]
         settings = db.get_settings(conn,u["id"])
         refreshed = conn.execute("SELECT last_ok_at FROM source_checks WHERE source=?",(f"idea:{idea_id}:refresh",)).fetchone()
+        can_resume = conn.execute("SELECT 1 FROM jobs WHERE idea_id=? AND kind IN ('research','refine') AND status IN ('failed','cancelled','done') LIMIT 1",(idea_id,)).fetchone()
     return render(request, "idea.html", idea=idea, ver=ver, versions=versions, evidence=evidence, qa=qa, job=job,
-                  feedback=feedback,research_spend=spend,settings=settings,
+                  feedback=feedback,research_spend=spend,settings=settings,can_resume=bool(can_resume),
                   explanation=explanation,feedback_rule_options=memory.RULES,
                   last_refresh=refreshed["last_ok_at"] if refreshed else None,
                   report=report, mrep=report.get("market") or {}, prod=report.get("production") or {},
@@ -314,12 +315,28 @@ async def idea_econ(request: Request, idea_id: int):
 def idea_refine(request: Request, idea_id: int, text: str = Form(...), csrf_token: str = Form(...)):
     u = need_user(request)
     csrf(request, csrf_token)
+    from ..bot import is_confused
     with db.db() as conn:
         if not db.get_idea(conn, idea_id, u["id"]):
             raise HTTPException(404)
+        if not text.strip() or is_confused(text):
+            return go(f"/ideas/{idea_id}?err=Уточнение не запустило платное исследование")
+        if conn.execute("SELECT 1 FROM jobs WHERE idea_id=? AND status IN ('queued','running')",(idea_id,)).fetchone():
+            return go(f"/ideas/{idea_id}")
         jobs.enqueue(conn, u["id"], "refine", idea_id, {"text": text.strip()},
                      dedupe_key=f"web-ref:{idea_id}:{uuid.uuid4().hex[:8]}")
         db.set_idea(conn, idea_id, stage="Уточнение в очереди")
+    return go(f"/ideas/{idea_id}")
+
+
+@app.post("/ideas/{idea_id}/resume")
+def idea_resume(request: Request, idea_id: int, csrf_token: str = Form(...)):
+    u = need_user(request)
+    csrf(request,csrf_token)
+    with db.db() as conn:
+        if not db.get_idea(conn,idea_id,u["id"]):
+            raise HTTPException(404)
+        jobs.resume(conn,u["id"],idea_id)
     return go(f"/ideas/{idea_id}")
 
 

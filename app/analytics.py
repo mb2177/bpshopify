@@ -472,9 +472,7 @@ def screen_candidates(ctx, candidates, settings):
     if not credentials.ready(ctx.user_id,"dataforseo"):
         for candidate in candidates:
             candidate["analytics_screen"] = {"status":"needs_connection"}
-            if settings.get("require_analytics"):
-                candidate["eligible"] = False
-                candidate["screening_reasons"].append("Нужны аналитические измерения DataForSEO")
+            candidate["analytics_warning"] = "Trends и объёмы поиска не подключены. Предварительный отбор по проверяемым источникам."
         return candidates
     keywords = [str(c.get("research_keyword") or "").strip() for c in candidates[:5]]
     keywords = list(dict.fromkeys(k for k in keywords if len(k)>2))

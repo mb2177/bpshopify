@@ -299,16 +299,25 @@ def test_provider_json_removes_echoed_secret_values():
     assert clean=={"nested":{"value":100}}
 
 
-def test_no_paid_daily_generation_before_analytics_connection(owner,monkeypatch):
+def test_daily_without_api_keys_can_return_honest_web_evidence_candidate(owner,monkeypatch):
     monkeypatch.setattr(config,"FAKE_LLM",False)
-    monkeypatch.setattr(llm,"json_call",lambda *args,**kwargs:pytest.fail("Must not pay for unsupported daily selection"))
+    candidate={"title":"Refill kit","product":"kit","buyer":"owners","situation":"maintenance", "market_guess":"USA",
+        "is_seasonal":False,"scalability":"contract production","why":"verifiable offer",
+        "evidence":[{"source_url":"https://seller.test/kit"}]}
+    def daily_call(ctx,step,system,text,**kw):
+        assert "Предварительный разбор" in text and "Объёмы" in text
+        ctx.seen_sources.append({"url":"https://seller.test/kit"})
+        return {"candidates":[candidate]}
+    monkeypatch.setattr(llm,"json_call",daily_call)
     with db.db() as conn:
         job_id=jobs.enqueue(conn,owner,"daily",payload={"date":"2026-11-23"})
         job=conn.execute("SELECT * FROM jobs WHERE id=?",(job_id,)).fetchone()
     research.run_daily(job)
     with db.db() as conn:
-        summary=conn.execute("SELECT summary FROM daily_runs WHERE user_id=?",(owner,)).fetchone()[0]
-        assert "DataForSEO" in summary and db.job_spend(conn,job_id)==0
+        row=conn.execute("SELECT * FROM daily_runs WHERE user_id=?",(owner,)).fetchone()
+        assert row["idea_id"] and db.job_spend(conn,job_id)==0
+        saved=db.jload(row["candidates"])[0]
+        assert saved["eligible"] and saved["analytics_screen"]["status"]=="needs_connection"
 
 
 def test_saved_mandatory_feedback_blocks_otherwise_positive_verdict(owner):
