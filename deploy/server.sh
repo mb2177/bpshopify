@@ -35,6 +35,8 @@ export SITE_ADDRESS="$SITE_ADDRESS_VAL"   # переменная окружен�
 echo "== Домен для HTTPS: ${SITE_ADDRESS_VAL:-не задан (только http)}"
 echo "== SITE_URL начинается с https: $([[ "$SITE_URL_VAL" == https://* ]] && echo да || echo нет)"
 
+# SCP preserves old files; remove the retired module before building the image.
+rm -f app/plans.py
 docker compose up -d --build --remove-orphans
 docker compose up -d --force-recreate --no-deps caddy
 docker image prune -f >/dev/null 2>&1 || true

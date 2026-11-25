@@ -235,7 +235,8 @@ def idea_page(request: Request, idea_id: int, v: int | None = None):
     u = need_user(request)
     idea, ver, versions, evidence, qa, job = _load_idea(u, idea_id, v)
     report = db.jload(ver["report"], {}) if ver else {}
-    explanation = report.get("basis") or basis.build(report,
+    saved_basis = report.get("basis") or {}
+    explanation = saved_basis if saved_basis.get("version")==2 else basis.build(report,
         db.jload(ver["econ_results"],{}) if ver else {},db.jload(ver["scoring"],{}) if ver else {})
     with db.db() as conn:
         feedback = db.feedback(conn,u["id"],idea_id)

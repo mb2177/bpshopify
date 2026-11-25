@@ -135,3 +135,23 @@ def test_preparation_uses_scheduler_dedupe_and_saved_owner_feedback(owner):
         assert len(rows)==1 and rows[0]["comment"]==OWNER_FEEDBACK
         context=research._memory_block(conn,owner,ctx=llm.Ctx(owner,one))
         assert "круглогодичного спроса" in context
+
+
+def test_old_saved_basis_and_historical_report_still_render(owner):
+    from fastapi.testclient import TestClient
+    from app.web.main import app
+    with db.db() as conn:
+        idea_id=db.create_idea(conn,owner,"web","Label kit")
+        jobs.enqueue(conn,owner,"research",idea_id)
+    assert worker.process_one()
+    with db.db() as conn:
+        version=db.latest_version(conn,idea_id)
+        report=db.jload(version["report"])
+        report["basis"]={"version":1,"summary":"Old saved explanation", "markets":[{"market":"USA","currency":"USD"}]}
+        conn.execute("UPDATE idea_versions SET report=? WHERE id=?",(db.jdump(report),version["id"]))
+    client=TestClient(app)
+    client.post("/login",data={"email":config.ADMIN_EMAIL,"password":config.ADMIN_PASSWORD})
+    for path in (f"/ideas/{idea_id}",f"/ideas/{idea_id}?v=1"):
+        page=client.get(path)
+        assert page.status_code==200 and 'id="panel-basis"' in page.text
+        assert 'id="panel-plan"' not in page.text

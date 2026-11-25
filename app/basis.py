@@ -8,9 +8,14 @@ def price_benchmark(market, currency):
     """One verified offer per seller; listing prices do not measure demand or sales."""
     offers, sellers = [], set()
     for item in market.get("competitors") or []:
+        if not item.get("verified"):
+            continue
         price = analytics.number(item.get("price"))
         url = item.get("url") or ""
-        domain = urlsplit(url).netloc.lower().removeprefix("www.")
+        try:
+            domain = urlsplit(url).netloc.lower().removeprefix("www.")
+        except (ValueError,TypeError):
+            continue
         if (not item.get("verified") or item.get("currency")!=currency or
             price is None or price<=0 or not domain or domain in sellers):
             continue
