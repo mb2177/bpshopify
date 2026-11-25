@@ -775,6 +775,9 @@ def run_recalculate(job, prepared_report=None) -> None:
         if not inputs:
             return
         report["rechecked_at"] = db.now_iso()
+        if (report.get("source_validation") or {}).get("rules_version")!=2:
+            rows = conn.execute("SELECT * FROM evidence WHERE idea_id=?",(idea["id"],)).fetchall()
+            sources.validate_evidence(report,rows)
         for row in conn.execute("SELECT * FROM evidence WHERE idea_id=? AND kind IN ('trends_csv','keyword_csv','keyword_metrics','manual')",
                                 (idea["id"],)):
             mk = row["market"]
@@ -801,7 +804,7 @@ def run_recalculate(job, prepared_report=None) -> None:
         if (report.get("production") or {}).get("options"):
             inputs = econ_inputs_from_research(inputs,report.get("market") or {},report["production"])
         result = finalize(conn,idea["id"],idea["user_id"],report,inputs,"Пересчёт сохранённых данных",
-                          "Обновлены формулы, проверки и план теста",bool(report.get("partial")))
+                          "Обновлены формулы и проверки сохранённых данных",bool(report.get("partial")))
     if db.jload(job["payload"],{}).get("notify"):
         notify.idea_ready(idea["user_id"],idea["id"],result["version"],updated=True)
 

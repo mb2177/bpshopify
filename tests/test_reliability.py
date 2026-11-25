@@ -149,12 +149,14 @@ def test_old_saved_basis_and_historical_report_still_render(owner):
         report=db.jload(version["report"])
         report["basis"]={"version":1,"summary":"Old saved explanation", "markets":[{"market":"USA","currency":"USD"}]}
         conn.execute("UPDATE idea_versions SET report=? WHERE id=?",(db.jdump(report),version["id"]))
+        db.set_idea(conn,idea_id,status="failed",stage="Ошибка: ValueError")
     client=TestClient(app)
     client.post("/login",data={"email":config.ADMIN_EMAIL,"password":config.ADMIN_PASSWORD})
     for path in (f"/ideas/{idea_id}",f"/ideas/{idea_id}?v=1"):
         page=client.get(path)
         assert page.status_code==200 and 'id="panel-basis"' in page.text
         assert 'id="panel-plan"' not in page.text
+        assert "ValueError" not in page.text
 
 
 def test_search_uses_direct_structured_results_with_budget_cap(owner,monkeypatch):
@@ -262,3 +264,16 @@ def test_production_uses_economical_model_and_preserves_explicit_deep_mode(owner
         research.step_production(llm.Ctx(owner,research_model=config.MODEL_DEEP),conn,idea,{}, {},{})
     assert calls[0]["model"]==config.MODEL_FAST
     assert calls[1]["model"]==config.MODEL_DEEP
+
+
+def test_marketplace_search_badge_does_not_prove_demand_for_one_product(owner,monkeypatch):
+    monkeypatch.setattr(config,"FAKE_LLM",False)
+    url="https://www.amazon.com/s?k=edge+guard+tape"
+    quote="300+ bought in past month"
+    monkeypatch.setattr(sources,"fetch_url_text",lambda u:{"ok":True,"text":quote,"retrieved_at":db.now_iso()})
+    signal={"claim":"This product sells 300+", "source_url":url,"market":"USA","scope":"product",
+        "quote":quote,"type":"observation"}
+    report={"seen_sources":[{"url":url}],"market":{"markets":{"USA":{"demand":{"signals":[signal]}}}}}
+    sources.validate_evidence(report,[])
+    assert signal["verified"] is False and signal["type"]=="estimate"
+    assert report["source_validation"]["rules_version"]==2

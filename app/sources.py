@@ -27,6 +27,16 @@ def _quote_text(value):
     return " ".join(text.translate(str.maketrans({"’":"'","‘":"'","“":'"',"”":'"'})).split())
 
 
+def _search_listing(url):
+    parts = urlsplit(url or "")
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = parts.path.rstrip("/").lower()
+    if host.startswith("amazon."):
+        return path in ("/s","/gp/search","/b") or "/bestsellers" in path
+    return ((host=="etsy.com" and path=="/search") or
+            (host.startswith("google.") and path=="/search"))
+
+
 def canonical_url(value: str | None) -> str:
     try:
         parts = urlsplit(str(value or ""))
@@ -122,6 +132,7 @@ def parse_keyword_csv(content: bytes) -> dict:
 def validate_evidence(report: dict, manual_rows: list) -> None:
     """Verify provenance against search results and source text; keep failed claims as estimates."""
     if config.FAKE_LLM:
+        report["source_validation"] = {"rules_version":2,"checked_at":db.now_iso()}
         for market in (report.get("market",{}).get("markets") or {}).values():
             for signal in (market.get("demand") or {}).get("signals",[]):
                 signal.update(verified=True,scope="product",retrieved_at=db.now_iso())
@@ -156,6 +167,7 @@ def validate_evidence(report: dict, manual_rows: list) -> None:
             quote = _quote_text(signal.get("quote"))
             text = _quote_text(page.get("text"))
             signal["verified"] = bool(url and signal.get("market")==mk and
+                                      not _search_listing(url) and
                                       (url in owner or (url in known and len(quote)>=20 and quote in text)))
             signal["retrieved_at"] = page.get("retrieved_at")
             if signal.get("type")=="observation" and not signal["verified"]:
@@ -176,7 +188,7 @@ def validate_evidence(report: dict, manual_rows: list) -> None:
             competitor["verified"] = bool(valid_price and right_market and url and (url in owner or
                 (url in known and page.get("ok") and price and len(quote)>=5 and quote in text and quoted_price)))
             competitor["retrieved_at"] = page.get("retrieved_at")
-    report["source_validation"] = {"checked_at":db.now_iso(),"pages_checked":len(pages),
+    report["source_validation"] = {"rules_version":2,"checked_at":db.now_iso(),"pages_checked":len(pages),
                                    "readable_pages":sum(bool(p.get("ok")) for p in pages)}
 
 AUTO, KEY, MANUAL, UNAVAILABLE, LATER = "автоматически", "нужен ключ", "ручной импорт", "недоступно", "после запуска магазина"

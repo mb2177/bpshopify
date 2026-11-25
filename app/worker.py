@@ -135,7 +135,7 @@ def process_one() -> bool:
             else:
                 jobs.finish(conn, job["id"], "failed", msg)
                 if job["idea_id"]:
-                    db.set_idea(conn, job["idea_id"], status="failed", stage=f"Ошибка: {name}")
+                    db.set_idea(conn, job["idea_id"], status="failed", stage="Разбор остановлен. Сохранённые шаги можно продолжить.")
                 from . import notify
                 if job["idea_id"]:
                     notify.simple(job["user_id"], human_error(job["idea_id"], e), f"fail:{job['id']}", job["idea_id"])
@@ -149,11 +149,12 @@ def main() -> None:
     with db.db() as conn:
         n = jobs.recover_stale(conn)
         # Upgrade saved reports using stored data. No external model calls are needed for this job.
-        for idea in conn.execute("SELECT id,user_id,current_version FROM ideas WHERE current_version>0").fetchall():
+        for idea in conn.execute("SELECT id,user_id,current_version FROM ideas WHERE current_version>0 ORDER BY id DESC").fetchall():
             version = db.latest_version(conn,idea["id"])
-            if db.jload(version["report"],{}).get("schema_version") != 3:
+            report = db.jload(version["report"],{})
+            if report.get("schema_version") != 3 or (report.get("source_validation") or {}).get("rules_version")!=2:
                 jobs.enqueue(conn,idea["user_id"],"recalculate",idea["id"],
-                             dedupe_key=f"schema3:{idea['id']}:{idea['current_version']}")
+                             dedupe_key=f"source-rules2:{idea['id']}:{idea['current_version']}")
     if n:
         log.info("Возвращено в очередь после перезапуска: %s", n)
     last_sched = 0.0
